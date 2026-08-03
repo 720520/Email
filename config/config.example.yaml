@@ -1,0 +1,75 @@
+# 复制为 config/config.local.yaml 后可按需修改；真实授权码建议放在环境变量中。
+app:
+  name: 基金运营邮件自动解析与净值汇总系统
+  environment: production
+  debug: false
+  api_prefix: /api/v1
+  cors_origins:
+    - http://localhost:5173
+
+database:
+  url: sqlite:///./data/fund_nav.db
+  echo: false
+
+logging:
+  level: INFO
+  directory: logs
+  filename: backend.log
+  max_bytes: 10485760
+  backup_count: 10
+
+email:
+  host: imap.example.com
+  port: 993
+  username: operations@example.com
+  auth_mode: password
+  password: ""
+  oauth2_access_token: ""
+  use_ssl: true
+  start_tls: false
+  timeout_seconds: 30
+  folder: INBOX
+  lookback_days: 7
+  max_messages_per_run: 200
+  max_attachment_bytes: 52428800
+  retry_attempts: 3
+  retry_base_delay_seconds: 1
+  uid_reservation_stale_seconds: 1800
+  candidate_keywords:
+    - 基金净值
+    - 每日净值
+    - 净值表
+    - 资产净值
+  excel_extensions:
+    - .xls
+    - .xlsx
+
+scheduler:
+  enabled: true
+  timezone: Asia/Shanghai
+  daily_hour: 18
+  daily_minute: 0
+
+excel:
+  # 不同托管平台的字段差异优先在此词典文件中维护，无需改代码。
+  field_alias_file: config/excel_fields.yaml
+  header_scan_rows: 40
+  max_header_rows: 3
+  min_header_fields: 2
+  ambiguity_score_delta: 5
+  max_consecutive_blank_rows: 20
+  max_columns: 100
+  # 数据行后的声明/免责声明属于页脚，命中后立即停止解析，防止生成伪异常。
+  footer_markers:
+    - 声明
+    - 免责声明
+    - 风险提示
+    - 重要提示
+    - 特别提示
+    - 保密声明
+    - confidential note
+    - disclaimer
+
+storage:
+  data_directory: data
+  archive_timezone: Asia/Shanghai

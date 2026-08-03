@@ -1,0 +1,80 @@
+app:
+  name: 基金运营邮件自动解析与净值汇总系统
+  environment: development
+  debug: false
+  api_prefix: /api/v1
+  cors_origins:
+    - http://localhost:5173
+    - http://127.0.0.1:5173
+
+database:
+  url: sqlite:///./data/fund_nav.db
+  echo: false
+
+logging:
+  level: INFO
+  directory: logs
+  filename: backend.log
+  max_bytes: 10485760
+  backup_count: 10
+
+email:
+  host: "imap.qq.com"
+  port: 993
+  username: "2106492986@qq.com"
+  auth_mode: password
+  password: ""
+  oauth2_access_token: ""
+  use_ssl: true
+  start_tls: false
+  timeout_seconds: 30
+  folder: INBOX
+  lookback_days: 7
+  max_messages_per_run: 200
+  max_attachment_bytes: 52428800
+  retry_attempts: 3
+  retry_base_delay_seconds: 1
+  uid_reservation_stale_seconds: 1800
+  candidate_keywords:
+    - 基金净值
+    - 每日净值
+    - 净值表
+    - 资产净值
+  excel_extensions:
+    - .xls
+    - .xlsx
+
+scheduler:
+  enabled: false
+  timezone: Asia/Shanghai
+  daily_hour: 18
+  daily_minute: 0
+
+excel:
+  field_alias_file: config/excel_fields.yaml
+  header_scan_rows: 40
+  max_header_rows: 3
+  min_header_fields: 2
+  ambiguity_score_delta: 5
+  max_consecutive_blank_rows: 20
+  max_columns: 100
+  footer_markers:
+    - 声明
+    - 免责声明
+    - 风险提示
+    - 重要提示
+    - 特别提示
+    - 保密声明
+    - confidential note
+    - disclaimer
+
+storage:
+  data_directory: data
+  archive_timezone: Asia/Shanghai
+  daily_export_filename: 每日基金净值汇总.xlsx
+
+security:
+  secret_key: development-only-secret-change-me
+  session_cookie_name: fund_nav_session
+  session_ttl_minutes: 480
+  secure_cookie: false

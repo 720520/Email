@@ -1,0 +1,97 @@
+# 标准字段别名。新增托管平台格式时，优先追加经过确认的精确别名。
+fields:
+  product_code:
+    aliases:
+      - 产品代码
+      - 产品编码
+      - 产品编号
+      - 基金代码
+      - 基金编码
+      - 基金编号
+      - 资产代码
+      - 证券代码
+  product_name:
+    aliases:
+      - 产品名称
+      - 产品全称
+      - 基金名称
+      - 基金全称
+      - 资产名称
+  nav_date:
+    aliases:
+      - 估值基准日
+      - 估值日期
+      - 净值日期
+      - 业务日期
+      - 数据日期
+      - 日期
+  unit_nav:
+    aliases:
+      - 单位净值
+      - 单位基金净值
+      - 基金单位净值
+      - 份额净值
+      - 资产份额净值
+      - 资产份额净值(元)
+  total_nav:
+    aliases:
+      - 累计净值
+      - 累计单位净值
+      - 基金累计净值
+      - 资产份额累计净值
+      - 资产份额累计净值(元)
+  asset_value:
+    aliases:
+      - 资产净值
+      - 资产净值(元)
+      - 基金资产净值
+      - 产品资产净值
+      - 净资产
+      - 资产总净值
+  asset_share:
+    aliases:
+      - 资产份额
+      - 基金份额
+      - 产品份额
+      - 总份额
+      - 实收基金
+
+types:
+  single_fund_daily:
+    required_fields:
+      - product_code
+      - product_name
+      - unit_nav
+    optional_fields:
+      - nav_date
+      - total_nav
+      - asset_value
+    signature_aliases:
+      - 资产代码
+      - 资产名称
+      - 资产份额净值
+  fund_nav_summary:
+    required_fields:
+      - product_code
+      - product_name
+      - nav_date
+      - unit_nav
+    optional_fields:
+      - total_nav
+      - asset_value
+    signature_aliases:
+      - 估值基准日
+  asset_nav_browser:
+    required_fields:
+      - product_code
+      - product_name
+      - nav_date
+      - asset_value
+      - asset_share
+    optional_fields:
+      - unit_nav
+      - total_nav
+    signature_aliases:
+      - 资产净值
+      - 资产份额
+
