@@ -8,8 +8,16 @@ fields:
       - 基金代码
       - 基金编码
       - 基金编号
+  asset_code:
+    aliases:
       - 资产代码
       - 证券代码
+  registration_code:
+    aliases:
+      - 协会备案代码
+      - 协会备案编码
+      - 备案代码
+      - 备案编码
   product_name:
     aliases:
       - 产品名称
@@ -55,43 +63,121 @@ fields:
       - 产品份额
       - 总份额
       - 实收基金
+  paid_in_capital:
+    aliases:
+      - 实收资本
+      - 实收资本(元)
+  holding_shares:
+    aliases:
+      - 持有份额
+  reference_market_value:
+    aliases:
+      - 参考市值
+      - 参考市值(元)
+  total_assets:
+    aliases:
+      - 总资产
+      - 总资产(元)
+  total_assets_nav_ratio:
+    aliases:
+      - 总资产/资产净值
+      - 总资产资产净值比
+  investor_name:
+    aliases:
+      - 投资者名称
+  investor_account:
+    aliases:
+      - 投资者基金账号
+      - 投资者账号
+  parent_unit_nav:
+    aliases:
+      - 母基金单位净值
+  parent_total_nav:
+    aliases:
+      - 母基金累计单位净值
+  parent_asset_value:
+    aliases:
+      - 母基金资产净值
+  parent_product_code:
+    aliases:
+      - 母基金产品代码
+  parent_product_name:
+    aliases:
+      - 母基金产品名称
+  notes:
+    aliases:
+      - 备注
+  parent_paid_in_capital:
+    aliases:
+      - 母基金实收资本
+      - 母基金实收资本(元)
 
 types:
   single_fund_daily:
     required_fields:
-      - product_code
       - product_name
       - unit_nav
+    required_any:
+      - [product_code, asset_code, registration_code]
     optional_fields:
       - nav_date
       - total_nav
       - asset_value
+      - asset_share
+      - paid_in_capital
+      - holding_shares
+      - reference_market_value
+      - total_assets
+      - total_assets_nav_ratio
+      - investor_name
+      - investor_account
+      - parent_unit_nav
+      - parent_total_nav
+      - parent_asset_value
+      - parent_product_code
+      - parent_product_name
+      - notes
+      - parent_paid_in_capital
+      - registration_code
+      - asset_code
     signature_aliases:
       - 资产代码
       - 资产名称
       - 资产份额净值
   fund_nav_summary:
     required_fields:
-      - product_code
       - product_name
       - nav_date
       - unit_nav
+    required_any:
+      - [product_code, asset_code, registration_code]
     optional_fields:
       - total_nav
       - asset_value
+      - asset_share
+      - paid_in_capital
+      - total_assets
+      - total_assets_nav_ratio
+      - registration_code
+      - asset_code
     signature_aliases:
       - 估值基准日
   asset_nav_browser:
     required_fields:
-      - product_code
       - product_name
       - nav_date
       - asset_value
       - asset_share
+    required_any:
+      - [product_code, asset_code, registration_code]
     optional_fields:
       - unit_nav
       - total_nav
+      - paid_in_capital
+      - total_assets
+      - total_assets_nav_ratio
+      - registration_code
+      - asset_code
     signature_aliases:
       - 资产净值
       - 资产份额
-

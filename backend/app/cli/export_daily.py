@@ -10,6 +10,7 @@ from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import get_database_manager
 from app.services.export_service import DailyExcelExportService
+from app.services.foundation_service import FoundationService
 
 
 def _parse_args() -> argparse.Namespace:
@@ -26,7 +27,16 @@ def main() -> int:
     args = _parse_args()
     settings = get_settings()
     configure_logging(settings)
-    service = DailyExcelExportService(settings, get_database_manager().session_factory)
+    manager = get_database_manager()
+    with manager.session_factory() as session, session.begin():
+        session.info["skip_tenant_scope"] = True
+        foundation = FoundationService(settings).ensure(session)
+    service = DailyExcelExportService(
+        settings,
+        manager.session_factory,
+        tenant_id=foundation.tenant_id,
+        mailbox_ids=(foundation.mailbox_account_id,),
+    )
     result = service.export(args.date)
     print(
         json.dumps(

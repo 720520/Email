@@ -136,6 +136,19 @@ def parse_decimal(value: Any) -> Decimal | None:
     return result
 
 
+def parse_ratio(value: Any) -> Decimal | None:
+    """把百分比文本转换为比例值，例如 100.10% -> 1.001。"""
+
+    if is_blank(value):
+        return None
+    if isinstance(value, str):
+        text = normalize_text(value)
+        if text and text.endswith("%"):
+            numeric = parse_decimal(text[:-1])
+            return None if numeric is None else numeric / Decimal("100")
+    return parse_decimal(value)
+
+
 def serialize_value(value: Any, *, max_length: int = 500) -> Any:
     """转换成后续可写入 JSON 异常记录的安全值。"""
 

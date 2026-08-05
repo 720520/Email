@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter
 from sqlalchemy import distinct, func, select
 
-from app.api.deps import CurrentUser, DatabaseSession
+from app.api.deps import TenantDatabaseSession, TenantScope
 from app.api.schemas.operations import DashboardResponse, RecentExceptionItem
 from app.core.config import get_settings
 from app.db.models import (
@@ -23,8 +23,8 @@ router = APIRouter()
 
 
 @router.get("", response_model=DashboardResponse)
-def dashboard(session: DatabaseSession, user: CurrentUser) -> DashboardResponse:
-    del user
+def dashboard(session: TenantDatabaseSession, scope: TenantScope) -> DashboardResponse:
+    del scope
     settings = get_settings()
     timezone = ZoneInfo(settings.storage.archive_timezone)
     business_date = datetime.now(timezone).date()

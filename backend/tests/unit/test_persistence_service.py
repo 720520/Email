@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -16,6 +17,9 @@ from app.db.models import (
     EmailStatus,
     ExceptionRecord,
     FundNav,
+    FundProduct,
+    MailboxAccount,
+    Tenant,
 )
 from app.db.session import DatabaseManager
 from app.email.models import (
@@ -44,6 +48,20 @@ from app.services.persistence_service import (
 def database(tmp_path: Path):
     manager = DatabaseManager(f"sqlite:///{(tmp_path / 'persistence.db').as_posix()}")
     Base.metadata.create_all(manager.engine)
+    with manager.session_factory() as session, session.begin():
+        session.info["skip_tenant_scope"] = True
+        session.add(Tenant(id=1, code="tenant-1", name="Tenant 1"))
+        session.add(
+            MailboxAccount(
+                id=1,
+                tenant_id=1,
+                display_name="Mailbox 1",
+                host="imap.example.com",
+                username="ops@example.com",
+                is_default=True,
+            )
+        )
+    manager.session_factory.configure(info={"tenant_id": 1, "mailbox_ids": (1,)})
     yield manager
     manager.dispose()
 
@@ -56,6 +74,8 @@ def _create_attachment(
 ) -> int:
     with database.session_factory() as session, session.begin():
         email = EmailRecord(
+            tenant_id=1,
+            mailbox_account_id=1,
             mailbox="imap.example.com/INBOX",
             mailbox_key="mailbox-key",
             uid_validity="100",
@@ -69,6 +89,8 @@ def _create_attachment(
         session.add(email)
         session.flush()
         attachment = AttachmentRecord(
+            tenant_id=1,
+            mailbox_account_id=1,
             email_id=email.id,
             original_name=Path(stored_path).name,
             stored_path=stored_path,
@@ -122,7 +144,13 @@ def test_duplicate_nav_keeps_first_history_and_creates_exception(
         first = service.persist(
             session,
             attachment_id=first_attachment_id,
-            result=_parse_result(tmp_path / "first.xlsx", _nav_record(source_file="first.xlsx")),
+            result=_parse_result(
+                tmp_path / "first.xlsx",
+                replace(
+                    _nav_record(source_file="first.xlsx"),
+                    investment_manager_info="首次附件经理信息",
+                ),
+            ),
         )
     with database.session_factory() as session, session.begin():
         duplicate = service.persist(
@@ -130,7 +158,14 @@ def test_duplicate_nav_keeps_first_history_and_creates_exception(
             attachment_id=second_attachment_id,
             result=_parse_result(
                 tmp_path / "second.xlsx",
-                _nav_record(source_file="second.xlsx", product_code="SAWK26", unit_nav="9.9"),
+                replace(
+                    _nav_record(
+                        source_file="second.xlsx",
+                        product_code="SAWK26",
+                        unit_nav="9.9",
+                    ),
+                    investment_manager_info="重复附件不应覆盖",
+                ),
             ),
         )
 
@@ -141,6 +176,7 @@ def test_duplicate_nav_keeps_first_history_and_creates_exception(
         )
         first_attachment = session.get(AttachmentRecord, first_attachment_id)
         second_attachment = session.get(AttachmentRecord, second_attachment_id)
+        product = session.scalar(select(FundProduct))
 
     assert first.inserted_count == 1
     assert duplicate.duplicate_count == 1
@@ -152,6 +188,7 @@ def test_duplicate_nav_keeps_first_history_and_creates_exception(
     assert duplicate_issue.raw_data["existing_nav_id"] == nav_records[0].id
     assert first_attachment.parse_status == AttachmentStatus.SUCCESS
     assert second_attachment.parse_status == AttachmentStatus.DUPLICATE
+    assert product.source_investment_manager_info == "首次附件经理信息"
 
 
 def test_different_nav_dates_are_kept_as_history(
@@ -176,6 +213,49 @@ def test_different_nav_dates_are_kept_as_history(
         count = session.scalar(select(func.count()).select_from(FundNav))
     assert result.inserted_count == 2
     assert count == 2
+
+
+def test_product_elements_create_master_and_daily_snapshot(
+    database: DatabaseManager,
+    tmp_path: Path,
+) -> None:
+    attachment_id = _create_attachment(database, stored_path="elements.xlsx")
+    record = replace(
+        _nav_record(source_file="elements.xlsx", product_code="T08604(B级)"),
+        asset_code="T08604(B级)",
+        registration_code="SAVH33",
+        share_class="B类",
+        paid_in_capital=Decimal("9000000.12"),
+        total_assets=Decimal("10010000.34"),
+        total_assets_nav_ratio=Decimal("1.001"),
+        parent_product_code="SAVH33",
+        parent_product_name="吉余牡丹私募证券投资基金",
+        investment_manager_info="附件经理信息",
+        investment_strategy_info="附件策略信息",
+    )
+
+    with database.session_factory() as session, session.begin():
+        result = NavPersistenceService().persist(
+            session,
+            attachment_id=attachment_id,
+            result=_parse_result(tmp_path / "elements.xlsx", record),
+        )
+
+    with database.session_factory() as session:
+        nav = session.scalar(select(FundNav))
+        product = session.scalar(select(FundProduct))
+
+    assert result.inserted_count == 1
+    assert nav is not None
+    assert nav.product_code == "T08604(B级)"
+    assert nav.master_product_code == "SAVH33"
+    assert nav.registration_code == "SAVH33"
+    assert nav.paid_in_capital == Decimal("9000000.1200")
+    assert nav.total_assets_nav_ratio == Decimal("1.00100000")
+    assert product is not None
+    assert product.product_code == "SAVH33"
+    assert product.product_name == "吉余牡丹私募证券投资基金"
+    assert product.investment_manager_info == "附件经理信息"
 
 
 def test_parser_issue_is_persisted_with_source_location(
@@ -270,6 +350,8 @@ def test_attachment_processor_verifies_hash_then_persists(
         database.session_factory,
         data_directory=data_directory,
         parser=FakeParser(),
+        tenant_id=1,
+        mailbox_account_id=1,
     )
     result = processor.process(attachment_id)
 
@@ -311,7 +393,11 @@ def test_mail_archive_persistence_is_idempotent_and_stores_utc(
         message_id="<7@example.com>",
         attachments=(),
     )
-    service = MailArchivePersistenceService(data_directory)
+    service = MailArchivePersistenceService(
+        data_directory,
+        tenant_id=1,
+        mailbox_account_id=1,
+    )
 
     with database.session_factory() as session, session.begin():
         first = service.persist(
@@ -372,7 +458,11 @@ def test_mail_without_excel_is_failed_and_audited(
     )
 
     with database.session_factory() as session, session.begin():
-        saved = MailArchivePersistenceService(data_directory).persist(
+        saved = MailArchivePersistenceService(
+            data_directory,
+            tenant_id=1,
+            mailbox_account_id=1,
+        ).persist(
             session,
             mailbox="imap.example.com/INBOX",
             mailbox_key="mailbox-key",

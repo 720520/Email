@@ -6,7 +6,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import FileResponse
 from sqlalchemy import func, or_, select
 
-from app.api.deps import CurrentUser, DatabaseSession
+from app.api.deps import TenantDatabaseSession, TenantScope
 from app.api.schemas.common import PageResponse
 from app.api.schemas.operations import (
     FundHistoryPoint,
@@ -17,7 +17,7 @@ from app.api.schemas.operations import (
 )
 from app.core.config import get_settings
 from app.core.errors import AppError
-from app.db.models import FundNav
+from app.db.models import FundNav, MailboxAccount
 from app.db.session import get_database_manager
 from app.domain.fund_identity import fund_display_identity, fund_display_sort_key
 from app.services.export_service import DailyExcelExportService
@@ -27,19 +27,23 @@ router = APIRouter()
 
 @router.get("", response_model=PageResponse[FundNavListItem])
 def list_fund_nav(
-    session: DatabaseSession,
-    user: CurrentUser,
+    session: TenantDatabaseSession,
+    scope: TenantScope,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     keyword: str | None = Query(default=None, max_length=200),
     product_code: str | None = Query(default=None, max_length=64),
     date_from: date | None = None,
     date_to: date | None = None,
+    mailbox_account_id: int | None = Query(default=None, ge=1),
 ) -> PageResponse[FundNavListItem]:
-    del user
     if date_from and date_to and date_from > date_to:
         raise AppError("INVALID_DATE_RANGE", "开始日期不能晚于结束日期")
     conditions = []
+    if mailbox_account_id is not None:
+        if mailbox_account_id not in scope.mailbox_ids:
+            raise AppError("FORBIDDEN", "当前账号没有查看该邮箱的权限", status_code=403)
+        conditions.append(FundNav.mailbox_account_id == mailbox_account_id)
     if keyword and keyword.strip():
         search = keyword.strip()
         conditions.append(
@@ -57,7 +61,8 @@ def list_fund_nav(
 
     total = session.scalar(select(func.count(FundNav.id)).where(*conditions)) or 0
     statement = (
-        select(FundNav)
+        select(FundNav, MailboxAccount.display_name)
+        .join(MailboxAccount, MailboxAccount.id == FundNav.mailbox_account_id)
         .where(*conditions)
         .order_by(
             FundNav.nav_date.desc(),
@@ -69,10 +74,12 @@ def list_fund_nav(
         .limit(page_size)
     )
     items: list[FundNavListItem] = []
-    for item in session.scalars(statement):
+    for item, mailbox_name in session.execute(statement):
         identity = fund_display_identity(item.product_name, item.product_code)
         items.append(FundNavListItem(
             id=item.id,
+            mailbox_account_id=item.mailbox_account_id,
+            mailbox_name=mailbox_name,
             product_name=item.product_name,
             product_code=item.product_code,
             nav_date=item.nav_date,
@@ -88,12 +95,12 @@ def list_fund_nav(
 
 @router.get("/latest-date", response_model=LatestFundNavDateResponse)
 def latest_fund_nav_date(
-    session: DatabaseSession,
-    user: CurrentUser,
+    session: TenantDatabaseSession,
+    scope: TenantScope,
 ) -> LatestFundNavDateResponse:
     """返回数据库最大净值日期，供页面确定默认导出业务日期。"""
 
-    del user
+    del scope
     return LatestFundNavDateResponse(
         latest_nav_date=session.scalar(select(func.max(FundNav.nav_date)))
     )
@@ -101,12 +108,12 @@ def latest_fund_nav_date(
 
 @router.get("/products", response_model=list[FundProductOption])
 def list_products(
-    session: DatabaseSession,
-    user: CurrentUser,
+    session: TenantDatabaseSession,
+    scope: TenantScope,
     keyword: str | None = Query(default=None, max_length=200),
     limit: int = Query(default=1000, ge=1, le=2000),
 ) -> list[FundProductOption]:
-    del user
+    del scope
     conditions = []
     if keyword and keyword.strip():
         search = keyword.strip()
@@ -136,11 +143,11 @@ def list_products(
 
 @router.get("/history", response_model=FundHistoryResponse)
 def fund_history(
-    session: DatabaseSession,
-    user: CurrentUser,
+    session: TenantDatabaseSession,
+    scope: TenantScope,
     product_code: str = Query(min_length=1, max_length=64),
 ) -> FundHistoryResponse:
-    del user
+    del scope
     code = product_code.strip().upper()
     statement = (
         select(FundNav)
@@ -166,12 +173,15 @@ def fund_history(
 
 
 @router.get("/export")
-def export_fund_nav(report_date: date, user: CurrentUser) -> FileResponse:
-    del user
+def export_fund_nav(report_date: date, scope: TenantScope) -> FileResponse:
     settings = get_settings()
     result = DailyExcelExportService(
         settings,
         get_database_manager().session_factory,
+        tenant_id=scope.tenant_id,
+        mailbox_ids=scope.mailbox_ids,
+        actor_user_id=scope.user.id,
+        actor_username=scope.user.username,
     ).export(report_date)
     return FileResponse(
         result.output_path,

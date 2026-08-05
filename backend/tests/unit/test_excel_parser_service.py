@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 
 import pandas as pd
@@ -149,4 +150,110 @@ def test_stop_before_custodian_disclaimer_without_creating_false_issue(
 
     assert [record.product_code for record in result.records] == ["F001"]
     assert not result.invalid_rows
+    assert not result.issues
+
+
+def test_parse_browser_uses_filing_code_instead_of_ta_code(tmp_path: Path) -> None:
+    """TA 代码不是产品唯一标识；缺少产品代码时应使用备案编码。"""
+
+    frame = pd.DataFrame(
+        [
+            [
+                "产品名称",
+                "TA代码",
+                "净值日期",
+                "单位净值",
+                "累计单位净值",
+                "资产净值",
+                "资产份额",
+                "备案编码",
+                "资产总值",
+            ],
+            [
+                "吉余商指陆号私募证券投资基金",
+                "SA2889",
+                "20260731",
+                "1.3029",
+                "1.3029",
+                "53092427.62",
+                "40748888.77",
+                "SARD55",
+                "53465590.67",
+            ],
+        ]
+    )
+    service = ExcelParserService(
+        _settings(tmp_path),
+        reader=FakeWorkbookReader({"Sheet1": frame}),
+    )
+
+    result = service.parse_file(tmp_path / "商指陆号净值表.xlsx")
+
+    assert result.detected_types == {WorkbookType.ASSET_NAV_BROWSER}
+    assert len(result.records) == 1
+    record = result.records[0]
+    assert record.product_code == "SARD55"
+    assert record.product_code != "SA2889"
+    assert record.nav_date.isoformat() == "2026-07-31"
+    assert str(record.unit_nav) == "1.3029"
+    assert str(record.asset_value) == "53092427.62"
+    assert not result.issues
+
+
+def test_parse_citics_product_elements_and_supplemental_profile(tmp_path: Path) -> None:
+    """中信资产代码用于份额快照，备案代码用于产品主体，说明区单独提取。"""
+
+    frame = pd.DataFrame(
+        [
+            [
+                "日期",
+                "资产代码",
+                "资产名称",
+                "资产份额净值(元)",
+                "资产份额累计净值(元)",
+                "资产净值(元)",
+                "实收资本(元)",
+                "总资产(元)",
+                "总资产/资产净值",
+                "协会备案代码",
+                "母基金产品代码",
+                "母基金产品名称",
+            ],
+            [
+                "2026-08-04",
+                "T08604(B级)",
+                "吉余牡丹私募证券投资基金B类",
+                "1.0234",
+                "1.1234",
+                "10000000",
+                "9000000",
+                "10010000",
+                "100.10%",
+                "SAVH33",
+                "SAVH33",
+                "吉余牡丹私募证券投资基金",
+            ],
+            ["投资经理信息：张某，具有多年投资管理经验。", None, None, None],
+            ["投资策略信息：采用多策略组合并严格控制回撤。", None, None, None],
+            ["声明：本附件由系统发送。", None, None, None],
+        ]
+    )
+    service = ExcelParserService(
+        _settings(tmp_path),
+        reader=FakeWorkbookReader({"净值": frame}),
+    )
+
+    result = service.parse_file(tmp_path / "中信产品要素.xlsx")
+
+    assert len(result.records) == 1
+    record = result.records[0]
+    assert record.product_code == "T08604(B级)"
+    assert record.asset_code == "T08604(B级)"
+    assert record.registration_code == "SAVH33"
+    assert record.share_class == "B类"
+    assert record.paid_in_capital == 9_000_000
+    assert record.total_assets_nav_ratio == Decimal("1.001")
+    assert record.parent_product_code == "SAVH33"
+    assert record.investment_manager_info.startswith("张某")
+    assert record.investment_strategy_info.startswith("采用多策略")
     assert not result.issues

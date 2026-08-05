@@ -1,4 +1,5 @@
 import { fundOperationsModule } from './fund-operations'
+import { tenantAdminModule } from './tenant-admin'
 import type { BusinessModule } from '@/platform/modules/types'
 
 export function registerBusinessModules(modules: BusinessModule[]): BusinessModule[] {
@@ -23,6 +24,6 @@ export function registerBusinessModules(modules: BusinessModule[]): BusinessModu
   return [...modules].sort((a, b) => a.order - b.order)
 }
 
-export const businessModules = registerBusinessModules([fundOperationsModule])
+export const businessModules = registerBusinessModules([fundOperationsModule, tenantAdminModule])
 
 export const businessRoutes = businessModules.flatMap((module) => module.routes)

@@ -35,6 +35,8 @@ class DashboardResponse(BaseModel):
 
 class EmailListItem(BaseModel):
     id: int
+    mailbox_account_id: int
+    mailbox_name: str
     subject: str
     sender: str
     receive_time: datetime
@@ -45,6 +47,8 @@ class EmailListItem(BaseModel):
 
 class FundNavListItem(BaseModel):
     id: int
+    mailbox_account_id: int
+    mailbox_name: str
     product_name: str
     product_code: str
     nav_date: date
@@ -83,6 +87,8 @@ class FundHistoryResponse(BaseModel):
 
 class ExceptionListItem(BaseModel):
     id: int
+    mailbox_account_id: int
+    mailbox_name: str
     email_id: int | None
     category: str
     exception_type: str

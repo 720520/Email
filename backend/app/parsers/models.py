@@ -66,6 +66,28 @@ class StandardNavRecord:
     source_row: int
     source_type: WorkbookType
     create_time: datetime
+    # 下列字段来自托管附件表格，是随估值日保留的产品要素快照。
+    asset_code: str | None = None
+    registration_code: str | None = None
+    share_class: str | None = None
+    asset_share: Decimal | None = None
+    paid_in_capital: Decimal | None = None
+    holding_shares: Decimal | None = None
+    reference_market_value: Decimal | None = None
+    total_assets: Decimal | None = None
+    total_assets_nav_ratio: Decimal | None = None
+    investor_name: str | None = None
+    investor_account: str | None = None
+    parent_unit_nav: Decimal | None = None
+    parent_total_nav: Decimal | None = None
+    parent_asset_value: Decimal | None = None
+    parent_product_code: str | None = None
+    parent_product_name: str | None = None
+    notes: str | None = None
+    parent_paid_in_capital: Decimal | None = None
+    # 中信附件说明区可提供这两项；产品主档允许人工覆盖且不会被后续邮件清空。
+    investment_manager_info: str | None = None
+    investment_strategy_info: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,4 +145,3 @@ class WorkbookParseResult:
     @property
     def invalid_rows(self) -> list[ParsedNavRow]:
         return [row for row in self.rows if not row.is_valid]
-

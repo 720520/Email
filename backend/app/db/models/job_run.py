@@ -5,22 +5,28 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Enum, Integer, Text
+from sqlalchemy import Enum, ForeignKey, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.db.models.enums import JobStatus, JobType, TriggerType
-from app.db.models.mixins import CreatedAtMixin
+from app.db.models.mixins import CreatedAtMixin, TenantOwnedMixin
 from app.db.types import UTCDateTime, utc_now
 
 if TYPE_CHECKING:
     from app.db.models.email_record import EmailRecord
 
 
-class JobRun(CreatedAtMixin, Base):
+class JobRun(TenantOwnedMixin, CreatedAtMixin, Base):
     __tablename__ = "job_run"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    mailbox_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("mailbox_account.id", ondelete="SET NULL"), index=True
+    )
+    triggered_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("app_user.id", ondelete="SET NULL"), index=True
+    )
     job_type: Mapped[JobType] = mapped_column(
         Enum(
             JobType,

@@ -8,16 +8,15 @@ import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { apiErrorMessage } from '@/platform/api/http'
-import { useAuthStore } from '@/platform/auth/auth.store'
 
 import EmailDetailDialog from '../components/EmailDetailDialog.vue'
-import { getExceptions, updateExceptionStatus } from '../api'
-import type { ExceptionItem, ExceptionSeverity, ExceptionStatus } from '../api/types'
+import { getExceptions, getMailboxes, updateExceptionStatus } from '../api'
+import type { ExceptionItem, ExceptionSeverity, ExceptionStatus, MailboxAccount } from '../api/types'
 
 const route = useRoute()
 const router = useRouter()
-const auth = useAuthStore()
-const canOperate = computed(() => auth.user?.role === 'admin' || auth.user?.role === 'operator')
+const mailboxes = ref<MailboxAccount[]>([])
+const canOperate = computed(() => mailboxes.value.some((item) => item.permissions.can_operate))
 const loading = ref(false)
 const rows = ref<ExceptionItem[]>([])
 const selectedEmailId = ref<number | null>(null)
@@ -30,6 +29,7 @@ const filters = reactive({
   dates: [] as string[],
   page: 1,
   pageSize: 20,
+  mailboxAccountId: '' as number | '',
 })
 const categories = ['日期缺失', '产品重复', '净值为空', '字段缺失', '格式错误', '文件异常', '其他异常']
 
@@ -44,6 +44,7 @@ async function loadRows() {
       status: filters.status || undefined,
       date_from: filters.dates[0] || undefined,
       date_to: filters.dates[1] || undefined,
+      mailbox_account_id: filters.mailboxAccountId || undefined,
     })
     rows.value = data.items
     total.value = data.total
@@ -55,7 +56,11 @@ async function loadRows() {
 }
 
 function search() { filters.page = 1; void loadRows() }
-function reset() { filters.category = ''; filters.severity = ''; filters.status = ''; filters.dates = []; filters.page = 1; void loadRows() }
+function reset() { filters.category = ''; filters.severity = ''; filters.status = ''; filters.mailboxAccountId = ''; filters.dates = []; filters.page = 1; void loadRows() }
+
+function canOperateRow(row: ExceptionItem) {
+  return mailboxes.value.find((item) => item.id === row.mailbox_account_id)?.permissions.can_operate === true
+}
 
 async function changeStatus(row: ExceptionItem, status: ExceptionStatus) {
   try {
@@ -74,7 +79,11 @@ function openEmail(row: ExceptionItem) {
 }
 
 watch(() => filters.pageSize, search)
-onMounted(loadRows)
+onMounted(async () => {
+  try { mailboxes.value = await getMailboxes() }
+  catch (error) { ElMessage.error(apiErrorMessage(error)) }
+  await loadRows()
+})
 </script>
 
 <template>
@@ -92,6 +101,7 @@ onMounted(loadRows)
         <el-form-item label="异常类别"><el-select v-model="filters.category" clearable placeholder="全部类别" style="width: 150px"><el-option v-for="item in categories" :key="item" :label="item" :value="item" /></el-select></el-form-item>
         <el-form-item label="严重程度"><el-select v-model="filters.severity" clearable placeholder="全部" style="width: 130px"><el-option label="错误" value="error" /><el-option label="警告" value="warning" /></el-select></el-form-item>
         <el-form-item label="处理状态"><el-select v-model="filters.status" clearable placeholder="全部" style="width: 140px"><el-option label="待处理" value="open" /><el-option label="已解决" value="resolved" /><el-option label="已忽略" value="ignored" /></el-select></el-form-item>
+        <el-form-item label="来源邮箱"><el-select v-model="filters.mailboxAccountId" clearable placeholder="全部邮箱" style="width: 170px"><el-option v-for="item in mailboxes" :key="item.id" :label="item.display_name" :value="item.id" /></el-select></el-form-item>
         <el-form-item label="发生日期"><el-date-picker v-model="filters.dates" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" /></el-form-item>
         <el-form-item class="filter-actions"><el-button :icon="Search" type="primary" @click="search">查询</el-button><el-button @click="reset">重置</el-button></el-form-item>
       </el-form>
@@ -103,16 +113,17 @@ onMounted(loadRows)
         <el-table-column label="级别" width="78"><template #default="{ row }"><span class="severity-label" :class="`severity-label--${row.severity}`">{{ row.severity === 'error' ? '错误' : '警告' }}</span></template></el-table-column>
         <el-table-column label="产品" min-width="190" show-overflow-tooltip><template #default="{ row }"><span>{{ row.product_name || row.product_code || '—' }}</span><small v-if="row.product_name && row.product_code" class="cell-secondary numeric">{{ row.product_code }}</small></template></el-table-column>
         <el-table-column label="异常说明" min-width="250" show-overflow-tooltip><template #default="{ row }"><span>{{ row.message }}</span><small v-if="row.field_name || row.row_number" class="cell-secondary">{{ row.sheet_name || '工作表' }} · 第 {{ row.row_number ?? '—' }} 行 · {{ row.field_name || '未知字段' }}</small></template></el-table-column>
-        <el-table-column label="来源" min-width="180" show-overflow-tooltip><template #default="{ row }"><span class="source-text">{{ row.source }}</span></template></el-table-column>
+        <el-table-column label="来源" min-width="190" show-overflow-tooltip><template #default="{ row }"><span>{{ row.mailbox_name }}</span><small class="cell-secondary">{{ row.source }}</small></template></el-table-column>
         <el-table-column label="发生时间" width="150"><template #default="{ row }"><span class="numeric">{{ dayjs(row.create_time).format('YYYY-MM-DD HH:mm') }}</span></template></el-table-column>
         <el-table-column label="状态" width="104"><template #default="{ row }"><StatusTag :status="row.status" /></template></el-table-column>
         <el-table-column v-if="canOperate" label="处置" width="146" fixed="right">
           <template #default="{ row }">
-            <template v-if="row.status === 'open'">
+            <template v-if="canOperateRow(row) && row.status === 'open'">
               <el-button text type="success" :icon="CircleCheck" @click="changeStatus(row, 'resolved')">解决</el-button>
               <el-button text @click="changeStatus(row, 'ignored')">忽略</el-button>
             </template>
-            <el-button v-else text @click="changeStatus(row, 'open')">重新打开</el-button>
+            <el-button v-else-if="canOperateRow(row)" text @click="changeStatus(row, 'open')">重新打开</el-button>
+            <span v-else class="text-muted">只读</span>
           </template>
         </el-table-column>
         <el-table-column label="原邮件" width="108" fixed="right">

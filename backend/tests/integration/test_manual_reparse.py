@@ -9,7 +9,16 @@ from sqlalchemy import func, select
 
 from app.core.config import Settings
 from app.db.base import Base
-from app.db.models import AttachmentRecord, FundNav, JobRun, JobStatus
+from app.db.models import (
+    AppUser,
+    AttachmentRecord,
+    FundNav,
+    JobRun,
+    JobStatus,
+    MailboxAccount,
+    Tenant,
+    UserRole,
+)
 from app.db.session import DatabaseManager
 from app.services.manual_reparse_service import ManualReparseService
 
@@ -34,8 +43,38 @@ def test_manual_upload_is_archived_parsed_and_audited(tmp_path: Path) -> None:
         database={"url": f"sqlite:///{(tmp_path / 'manual.db').as_posix()}"},
         storage={"data_directory": str(tmp_path / "data")},
     )
+    with database.session_factory() as session, session.begin():
+        session.info["skip_tenant_scope"] = True
+        session.add(Tenant(id=1, code="tenant-1", name="Tenant 1"))
+        session.add(
+            MailboxAccount(
+                id=1,
+                tenant_id=1,
+                display_name="Mailbox 1",
+                host="imap.example.com",
+                username="ops@example.com",
+                is_default=True,
+            )
+        )
+        session.add(
+            AppUser(
+                id=1,
+                username="operator",
+                password_hash="test-only",
+                role=UserRole.OPERATOR,
+                is_active=True,
+            )
+        )
+    database.session_factory.configure(info={"tenant_id": 1, "mailbox_ids": (1,)})
 
-    result = ManualReparseService(settings, database.session_factory).process(
+    result = ManualReparseService(
+        settings,
+        database.session_factory,
+        tenant_id=1,
+        mailbox_account_id=1,
+        actor_user_id=1,
+        actor_username="operator",
+    ).process(
         filename="人工修正净值.xlsx",
         content=_workbook_bytes(),
         username="operator",

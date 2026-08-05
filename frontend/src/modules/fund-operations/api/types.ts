@@ -1,4 +1,5 @@
 import type { PageResponse } from '@/platform/api/types'
+import type { UserRole } from '@/platform/api/types'
 
 export type EmailStatus = 'discovered' | 'archived' | 'processing' | 'success' | 'partial_success' | 'failed' | 'skipped'
 export type AttachmentStatus = 'pending' | 'archived' | 'parsing' | 'success' | 'partial_success' | 'failed' | 'duplicate' | 'unsupported'
@@ -27,6 +28,8 @@ export interface DashboardData {
 
 export interface EmailItem {
   id: number
+  mailbox_account_id: number
+  mailbox_name: string
   subject: string
   sender: string
   receive_time: string
@@ -36,6 +39,8 @@ export interface EmailItem {
 }
 
 export interface EmailConnectionInfo {
+  mailbox_account_id: number
+  display_name: string
   host: string
   port: number
   username: string
@@ -46,6 +51,91 @@ export interface EmailConnectionInfo {
   credential_configured: boolean
   configured: boolean
 }
+
+export interface MailboxPermissions {
+  can_read_metadata: boolean
+  can_read_content: boolean
+  can_operate: boolean
+  can_manage_credentials: boolean
+}
+
+export interface MailboxAccount {
+  id: number
+  display_name: string
+  provider_type: string
+  host: string
+  port: number
+  username: string
+  auth_mode: 'password' | 'oauth2'
+  use_ssl: boolean
+  start_tls: boolean
+  timeout_seconds: number
+  folder: string
+  lookback_days: number
+  max_messages_per_run: number
+  max_attachment_bytes: number
+  is_default: boolean
+  is_enabled: boolean
+  credential_configured: boolean
+  configuration_source: string
+  last_connection_status: string | null
+  last_connection_at: string | null
+  last_connection_error: string | null
+  last_sync_status: string | null
+  last_sync_at: string | null
+  permissions: MailboxPermissions
+}
+
+export interface MailboxSecurityStatus {
+  credential_key_configured: boolean
+  audit_key_configured: boolean
+  ready_for_credentials: boolean
+}
+
+export interface MailboxAccountPayload {
+  display_name?: string
+  host?: string
+  port?: number
+  username?: string
+  auth_mode?: 'password' | 'oauth2'
+  credential?: string
+  clear_credential?: boolean
+  use_ssl?: boolean
+  start_tls?: boolean
+  timeout_seconds?: number
+  folder?: string
+  lookback_days?: number
+  max_messages_per_run?: number
+  max_attachment_bytes?: number
+  retry_attempts?: number
+  retry_base_delay_seconds?: number
+  uid_reservation_stale_seconds?: number
+  is_default?: boolean
+  is_enabled?: boolean
+}
+
+export interface TenantMember {
+  user_id: number
+  username: string
+  role: UserRole
+  is_active: boolean
+}
+
+export interface MailboxGrant {
+  user_id: number
+  username: string
+  role: UserRole
+  can_read_metadata: boolean
+  can_read_content: boolean
+  can_operate: boolean
+  can_manage_credentials: boolean
+  is_active: boolean
+}
+
+export type MailboxGrantPayload = Pick<
+  MailboxGrant,
+  'can_read_metadata' | 'can_read_content' | 'can_operate' | 'can_manage_credentials' | 'is_active'
+>
 
 export interface EmailAttachmentDetail {
   id: number
@@ -91,6 +181,8 @@ export interface EmailSyncResult {
 
 export interface FundNavItem {
   id: number
+  mailbox_account_id: number
+  mailbox_name: string
   product_name: string
   product_code: string
   nav_date: string
@@ -125,8 +217,86 @@ export interface FundHistory {
   points: HistoryPoint[]
 }
 
+export interface FundProductSummary {
+  product_count: number
+  share_count: number
+  latest_nav_date: string | null
+  latest_asset_value: string | null
+  missing_manager_count: number
+  missing_strategy_count: number
+}
+
+export interface FundProductItem {
+  id: number
+  product_code: string
+  product_name: string
+  latest_source_date: string | null
+  share_count: number
+  unit_nav: string | null
+  total_nav: string | null
+  asset_value: string | null
+  paid_in_capital: string | null
+  total_assets: string | null
+  investment_manager_info: string | null
+  investment_strategy_info: string | null
+  investment_manager_manual: boolean
+  investment_strategy_manual: boolean
+  latest_source_file: string | null
+}
+
+export interface FundProductSnapshot {
+  id: number
+  mailbox_account_id: number
+  nav_date: string
+  product_code: string
+  product_name: string
+  asset_code: string | null
+  registration_code: string | null
+  share_class: string | null
+  unit_nav: string | null
+  total_nav: string | null
+  asset_value: string | null
+  asset_share: string | null
+  paid_in_capital: string | null
+  holding_shares: string | null
+  reference_market_value: string | null
+  total_assets: string | null
+  total_assets_nav_ratio: string | null
+  investor_name: string | null
+  investor_account: string | null
+  parent_unit_nav: string | null
+  parent_total_nav: string | null
+  parent_asset_value: string | null
+  parent_product_code: string | null
+  parent_product_name: string | null
+  notes: string | null
+  parent_paid_in_capital: string | null
+  source_file: string
+  available_field_count: number
+  total_field_count: number
+}
+
+export interface FundProductDetail extends FundProductItem {
+  source_investment_manager_info: string | null
+  source_investment_strategy_info: string | null
+  manual_investment_manager_info: string | null
+  manual_investment_strategy_info: string | null
+  create_time: string
+  update_time: string
+  latest_snapshots: FundProductSnapshot[]
+}
+
+export interface FundProductProfilePayload {
+  investment_manager_info?: string | null
+  investment_strategy_info?: string | null
+  restore_investment_manager_from_source?: boolean
+  restore_investment_strategy_from_source?: boolean
+}
+
 export interface ExceptionItem {
   id: number
+  mailbox_account_id: number
+  mailbox_name: string
   email_id: number | null
   category: string
   exception_type: string
@@ -155,4 +325,5 @@ export interface ManualReparseResult {
 
 export type EmailPage = PageResponse<EmailItem>
 export type FundNavPage = PageResponse<FundNavItem>
+export type FundProductPage = PageResponse<FundProductItem>
 export type ExceptionPage = PageResponse<ExceptionItem>

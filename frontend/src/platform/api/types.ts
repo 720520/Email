@@ -4,6 +4,18 @@ export interface CurrentUser {
   id: number
   username: string
   role: UserRole
+  tenant_id: number
+  tenant_code: string
+  tenant_name: string
+  is_platform_admin: boolean
+}
+
+export interface TenantOption {
+  id: number
+  code: string
+  name: string
+  role: UserRole
+  is_current: boolean
 }
 
 export interface PageResponse<T> {

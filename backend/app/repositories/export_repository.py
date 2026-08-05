@@ -12,10 +12,20 @@ from app.db.models import AttachmentRecord, EmailRecord, ExceptionRecord, FundNa
 
 class ExportRepository:
     @staticmethod
-    def list_nav_by_date(session: Session, report_date: date) -> list[FundNav]:
+    def list_nav_by_date(
+        session: Session,
+        report_date: date,
+        *,
+        tenant_id: int,
+        mailbox_ids: tuple[int, ...],
+    ) -> list[FundNav]:
         statement = (
             select(FundNav)
-            .where(FundNav.nav_date == report_date)
+            .where(
+                FundNav.tenant_id == tenant_id,
+                FundNav.mailbox_account_id.in_(mailbox_ids),
+                FundNav.nav_date == report_date,
+            )
             .order_by(FundNav.product_code, FundNav.product_name, FundNav.id)
         )
         return list(session.scalars(statement))
@@ -24,6 +34,8 @@ class ExportRepository:
     def list_exceptions_by_created_range(
         session: Session,
         *,
+        tenant_id: int,
+        mailbox_ids: tuple[int, ...],
         start_time: datetime,
         end_time: datetime,
     ) -> list[tuple[ExceptionRecord, str | None, str | None]]:
@@ -39,6 +51,8 @@ class ExportRepository:
             )
             .outerjoin(EmailRecord, ExceptionRecord.email_id == EmailRecord.id)
             .where(
+                ExceptionRecord.tenant_id == tenant_id,
+                ExceptionRecord.mailbox_account_id.in_(mailbox_ids),
                 ExceptionRecord.create_time >= start_time,
                 ExceptionRecord.create_time < end_time,
             )

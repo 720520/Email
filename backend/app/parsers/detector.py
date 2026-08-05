@@ -122,12 +122,20 @@ class TableDetector:
         scores: list[_TypeScore] = []
         for rule in self.registry.type_rules.values():
             required_hits = len(rule.required_fields & matched_fields)
-            required_ratio = required_hits / len(rule.required_fields)
-            missing_fields = tuple(sorted(rule.required_fields - matched_fields))
+            group_hits = sum(bool(group & matched_fields) for group in rule.required_any)
+            required_count = len(rule.required_fields) + len(rule.required_any)
+            required_ratio = (required_hits + group_hits) / required_count
+            missing = set(rule.required_fields - matched_fields)
+            missing.update(
+                "|".join(sorted(group))
+                for group in rule.required_any
+                if not group & matched_fields
+            )
+            missing_fields = tuple(sorted(missing))
             signature_hits = len(rule.signature_aliases & matched_aliases)
             score = (
                 required_ratio * 100
-                + (len(rule.required_fields) * 6 if not missing_fields else 0)
+                + (required_count * 6 if not missing_fields else 0)
                 + signature_hits * 15
                 + len(matched_fields)
             )

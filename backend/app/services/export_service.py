@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings
+from app.core.credential_security import audit_signing_key
 from app.db.models import (
     ExceptionRecord,
     ExceptionSeverity,
@@ -24,9 +25,11 @@ from app.db.models import (
     JobType,
     TriggerType,
 )
+from app.db.session import configure_tenant_scope
 from app.domain.exception_categories import exception_category
 from app.exports import DailyNavExportRow, DailyNavWorkbookBuilder, ExceptionExportRow
 from app.repositories import ExportRepository
+from app.services.audit_service import AuditService
 
 logger = logging.getLogger(__name__)
 
@@ -47,12 +50,21 @@ class DailyExcelExportService:
         settings: Settings,
         session_factory: sessionmaker[Session],
         *,
+        tenant_id: int,
+        mailbox_ids: tuple[int, ...],
+        actor_user_id: int | None = None,
+        actor_username: str = "system",
         repository: ExportRepository | None = None,
         workbook_builder: DailyNavWorkbookBuilder | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.settings = settings
         self.session_factory = session_factory
+        self.tenant_id = tenant_id
+        self.mailbox_ids = mailbox_ids
+        self.actor_user_id = actor_user_id
+        self.actor_username = actor_username
+        self.audit = AuditService(audit_signing_key(settings.security))
         self.repository = repository or ExportRepository()
         self.workbook_builder = workbook_builder or DailyNavWorkbookBuilder()
         self.clock = clock or (lambda: datetime.now(UTC))
@@ -117,9 +129,17 @@ class DailyExcelExportService:
         start_local = datetime.combine(report_date, time.min, tzinfo=self.timezone)
         end_local = start_local + timedelta(days=1)
         with self.session_factory() as session:
-            nav_records = self.repository.list_nav_by_date(session, report_date)
+            self._scope(session)
+            nav_records = self.repository.list_nav_by_date(
+                session,
+                report_date,
+                tenant_id=self.tenant_id,
+                mailbox_ids=self.mailbox_ids,
+            )
             exception_records = self.repository.list_exceptions_by_created_range(
                 session,
+                tenant_id=self.tenant_id,
+                mailbox_ids=self.mailbox_ids,
                 start_time=start_local.astimezone(UTC),
                 end_time=end_local.astimezone(UTC),
             )
@@ -167,8 +187,13 @@ class DailyExcelExportService:
         )
 
     def _output_path(self, report_date: date) -> Path:
+        scope_directory = self.settings.data_directory / "tenants" / str(self.tenant_id)
+        if len(self.mailbox_ids) == 1:
+            scope_directory = scope_directory / "mailboxes" / str(self.mailbox_ids[0])
+        else:
+            scope_directory = scope_directory / "combined"
         return (
-            self.settings.data_directory
+            scope_directory
             / f"{report_date.year:04d}"
             / f"{report_date.month:02d}"
             / f"{report_date.day:02d}"
@@ -198,7 +223,11 @@ class DailyExcelExportService:
 
     def _start_job(self, trigger_type: TriggerType, *, started_at: datetime) -> int:
         with self.session_factory() as session, session.begin():
+            self._scope(session)
             job = JobRun(
+                tenant_id=self.tenant_id,
+                mailbox_account_id=(self.mailbox_ids[0] if len(self.mailbox_ids) == 1 else None),
+                triggered_by_user_id=self.actor_user_id,
                 job_type=JobType.EXPORT,
                 trigger_type=trigger_type,
                 status=JobStatus.RUNNING,
@@ -206,6 +235,17 @@ class DailyExcelExportService:
             )
             session.add(job)
             session.flush()
+            self.audit.append(
+                session,
+                tenant_id=self.tenant_id,
+                actor_user_id=self.actor_user_id,
+                actor_username=self.actor_username,
+                mailbox_account_id=job.mailbox_account_id,
+                action="nav.export.start",
+                resource_type="job_run",
+                resource_id=job.id,
+                outcome="started",
+            )
             return job.id
 
     def _finish_job(
@@ -216,6 +256,7 @@ class DailyExcelExportService:
         error_message: str | None = None,
     ) -> None:
         with self.session_factory() as session, session.begin():
+            self._scope(session)
             job = session.get(JobRun, job_run_id)
             if job is None:
                 raise RuntimeError(f"导出任务记录不存在: {job_run_id}")
@@ -224,12 +265,31 @@ class DailyExcelExportService:
             job.success_count = 1 if success else 0
             job.failure_count = 0 if success else 1
             job.error_message = None if success else (error_message or "未知导出错误")[:4000]
+            self.audit.append(
+                session,
+                tenant_id=self.tenant_id,
+                actor_user_id=self.actor_user_id,
+                actor_username=self.actor_username,
+                mailbox_account_id=job.mailbox_account_id,
+                action="nav.export.finish",
+                resource_type="job_run",
+                resource_id=job.id,
+                outcome=job.status.value,
+                detail={"error": job.error_message},
+            )
 
     def _now(self) -> datetime:
         value = self.clock()
         if value.tzinfo is None:
             raise ValueError("导出服务时钟必须返回带时区的时间")
         return value.astimezone(UTC)
+
+    def _scope(self, session: Session) -> None:
+        configure_tenant_scope(
+            session,
+            tenant_id=self.tenant_id,
+            mailbox_ids=self.mailbox_ids,
+        )
 
 
 def _raw_text(raw_data: dict[str, Any], key: str) -> str | None:

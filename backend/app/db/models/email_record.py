@@ -10,7 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.db.models.enums import AttachmentStatus, EmailStatus
-from app.db.models.mixins import TimestampMixin
+from app.db.models.mixins import MailboxOwnedMixin, TimestampMixin
 from app.db.types import UTCDateTime
 
 if TYPE_CHECKING:
@@ -19,14 +19,15 @@ if TYPE_CHECKING:
     from app.db.models.job_run import JobRun
 
 
-class EmailRecord(TimestampMixin, Base):
+class EmailRecord(MailboxOwnedMixin, TimestampMixin, Base):
     __tablename__ = "email_record"
     __table_args__ = (
         UniqueConstraint(
-            "mailbox_key",
+            "tenant_id",
+            "mailbox_account_id",
             "uid_validity",
             "message_uid",
-            name="uq_email_record_mailbox_uidvalidity_uid",
+            name="uq_email_record_scope_uidvalidity_uid",
         ),
         Index("ix_email_record_receive_time", "receive_time"),
     )
@@ -64,7 +65,7 @@ class EmailRecord(TimestampMixin, Base):
     exceptions: Mapped[list[ExceptionRecord]] = relationship(back_populates="email")
 
 
-class AttachmentRecord(TimestampMixin, Base):
+class AttachmentRecord(MailboxOwnedMixin, TimestampMixin, Base):
     __tablename__ = "attachment_record"
     __table_args__ = (
         UniqueConstraint("email_id", "stored_path", name="uq_attachment_record_email_path"),

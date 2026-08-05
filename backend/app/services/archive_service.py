@@ -36,10 +36,14 @@ class EmailArchiveService:
         *,
         archive_timezone: str,
         max_attachment_bytes: int,
+        tenant_id: int | None = None,
+        mailbox_account_id: int | None = None,
     ) -> None:
         self.data_directory = data_directory
         self.timezone = ZoneInfo(archive_timezone)
         self.max_attachment_bytes = max_attachment_bytes
+        self.tenant_id = tenant_id
+        self.mailbox_account_id = mailbox_account_id
 
     def archive(
         self,
@@ -52,8 +56,17 @@ class EmailArchiveService:
         if receive_time.tzinfo is None:
             receive_time = receive_time.replace(tzinfo=UTC)
         local_date = receive_time.astimezone(self.timezone).date()
+        archive_root = self.data_directory
+        if self.tenant_id is not None and self.mailbox_account_id is not None:
+            archive_root = (
+                archive_root
+                / "tenants"
+                / str(self.tenant_id)
+                / "mailboxes"
+                / str(self.mailbox_account_id)
+            )
         daily_directory = (
-            self.data_directory
+            archive_root
             / f"{local_date.year:04d}"
             / f"{local_date.month:02d}"
             / f"{local_date.day:02d}"
@@ -85,6 +98,8 @@ class EmailArchiveService:
 
         manifest_path = email_directory / f"{archive_stem}.json"
         manifest = {
+            "tenant_id": self.tenant_id,
+            "mailbox_account_id": self.mailbox_account_id,
             "mailbox_key": mailbox_key,
             "uid": source.uid,
             "message_id": parsed.message_id,

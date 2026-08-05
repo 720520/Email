@@ -39,7 +39,11 @@ router.beforeEach(async (to) => {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
   const roles = to.meta.roles as UserRole[] | undefined
-  if (roles && !roles.some((role) => roleRank[auth.user!.role] >= roleRank[role])) {
+  if (
+    roles
+    && !auth.user.is_platform_admin
+    && !roles.some((role) => roleRank[auth.user!.role] >= roleRank[role])
+  ) {
     return '/overview'
   }
   return true

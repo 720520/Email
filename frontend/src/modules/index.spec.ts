@@ -14,10 +14,11 @@ const fakeModule = (id: string, routeName: string, path: string, order = 10): Bu
 })
 
 describe('业务模块注册中心', () => {
-  it('聚合基金运营模块的导航与路由', () => {
-    expect(businessModules.map((module) => module.id)).toEqual(['fund-operations'])
+  it('聚合基金运营与租户管理模块的导航和路由', () => {
+    expect(businessModules.map((module) => module.id)).toEqual(['fund-operations', 'tenant-admin'])
     expect(businessRoutes.map((route) => route.name)).toEqual([
-      'overview', 'emails', 'fund-nav', 'exceptions', 'operations',
+      'overview', 'emails', 'mailboxes', 'fund-nav', 'fund-products', 'exceptions', 'operations',
+      'tenant-management',
     ])
   })
 

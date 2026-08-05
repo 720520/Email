@@ -23,6 +23,7 @@ class HeaderMatch:
 class WorkbookTypeRule:
     workbook_type: WorkbookType
     required_fields: frozenset[str]
+    required_any: tuple[frozenset[str], ...]
     optional_fields: frozenset[str]
     signature_aliases: frozenset[str]
 
@@ -77,8 +78,10 @@ class FieldAliasRegistry:
                 raise ValueError(f"类型 {type_name} 配置无效")
             workbook_type = WorkbookType(type_name)
             required = cls._field_set(definition, "required_fields")
+            required_any = cls._required_any(definition)
             optional = cls._field_set(definition, "optional_fields")
-            unknown_fields = (required | optional) - aliases.keys()
+            grouped_fields = set().union(*required_any) if required_any else set()
+            unknown_fields = (required | optional | grouped_fields) - aliases.keys()
             if unknown_fields:
                 raise ValueError(f"类型 {type_name} 引用了未知字段: {sorted(unknown_fields)}")
             signatures = frozenset(
@@ -89,6 +92,7 @@ class FieldAliasRegistry:
             type_rules[workbook_type] = WorkbookTypeRule(
                 workbook_type=workbook_type,
                 required_fields=frozenset(required),
+                required_any=required_any,
                 optional_fields=frozenset(optional),
                 signature_aliases=signatures,
             )
@@ -100,6 +104,20 @@ class FieldAliasRegistry:
         if not isinstance(value, list):
             raise ValueError(f"{key} 必须为列表")
         return {str(item) for item in value}
+
+    @staticmethod
+    def _required_any(definition: dict[str, Any]) -> tuple[frozenset[str], ...]:
+        """读取“每组至少命中一个字段”，用于兼容产品/资产/备案代码差异。"""
+
+        value = definition.get("required_any", [])
+        if not isinstance(value, list):
+            raise ValueError("required_any 必须为列表")
+        groups: list[frozenset[str]] = []
+        for group in value:
+            if not isinstance(group, list) or not group:
+                raise ValueError("required_any 的每一项必须是非空字段列表")
+            groups.append(frozenset(str(item) for item in group))
+        return tuple(groups)
 
     def match(self, variants: list[str]) -> HeaderMatch | None:
         best: HeaderMatch | None = None

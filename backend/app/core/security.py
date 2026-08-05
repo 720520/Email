@@ -76,6 +76,7 @@ class PasswordHasher:
 class SessionClaims:
     user_id: int
     username: str
+    tenant_id: int
     token_version: int
     expires_at: datetime
 
@@ -93,12 +94,14 @@ class SessionTokenService:
         user_id: int,
         username: str,
         token_version: int,
+        tenant_id: int = 1,
         now: datetime | None = None,
     ) -> str:
         issued_at = (now or datetime.now(UTC)).astimezone(UTC)
         payload = {
             "sub": user_id,
             "username": username,
+            "tenant_id": tenant_id,
             "ver": token_version,
             "iat": int(issued_at.timestamp()),
             "exp": int((issued_at + self.ttl).timestamp()),
@@ -130,6 +133,7 @@ class SessionTokenService:
             return SessionClaims(
                 user_id=int(payload["sub"]),
                 username=str(payload["username"]),
+                tenant_id=int(payload["tenant_id"]),
                 token_version=int(payload["ver"]),
                 expires_at=expires_at,
             )

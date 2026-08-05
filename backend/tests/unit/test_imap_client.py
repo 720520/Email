@@ -13,9 +13,11 @@ class FakeImapClient:
         self.kwargs = kwargs
         self.logged_in_with = None
         self.oauth2_logged_in_with = None
+        self.client_id = None
         self.selected_folder = None
         self.search_criteria = None
         self.logged_out = False
+        self.events = []
         self.instances.append(self)
 
     def starttls(self, ssl_context) -> None:
@@ -23,12 +25,22 @@ class FakeImapClient:
 
     def login(self, username, password) -> None:
         self.logged_in_with = (username, password)
+        self.events.append("login")
 
     def oauth2_login(self, username, access_token) -> None:
         self.oauth2_logged_in_with = (username, access_token)
+        self.events.append("oauth2_login")
+
+    def has_capability(self, capability) -> bool:
+        return str(capability).upper() == "ID"
+
+    def id_(self, parameters) -> None:
+        self.client_id = parameters
+        self.events.append("id")
 
     def select_folder(self, folder, readonly=False):
         self.selected_folder = (folder, readonly)
+        self.events.append("select")
         return {b"UIDVALIDITY": 98765, b"EXISTS": 128}
 
     def search(self, criteria):
@@ -73,6 +85,12 @@ def test_imap_gateway_connects_readonly_searches_uid_and_fetches_without_seen(
     assert client.kwargs["ssl"] is True
     assert client.kwargs["use_uid"] is True
     assert client.logged_in_with == ("operations@example.com", "authorization-code")
+    assert client.client_id == {
+        "name": "FundNavMailReader",
+        "version": "0.1.0",
+        "vendor": "LocalFundOperations",
+    }
+    assert client.events[:3] == ["login", "id", "select"]
     assert client.selected_folder == ("基金净值", True)
     assert gateway.uid_validity == "98765"
     assert gateway.message_count == 128
@@ -99,3 +117,27 @@ def test_imap_gateway_supports_outlook_oauth2(monkeypatch) -> None:
     client = FakeImapClient.instances[0]
     assert client.oauth2_logged_in_with == ("operations@example.com", "short-lived-token")
     assert client.logged_in_with is None
+
+
+def test_imap_gateway_skips_client_id_when_server_does_not_advertise_it(
+    monkeypatch,
+) -> None:
+    class FakeImapClientWithoutId(FakeImapClient):
+        def has_capability(self, capability) -> bool:
+            del capability
+            return False
+
+    FakeImapClient.instances.clear()
+    monkeypatch.setattr(imap_client, "IMAPClient", FakeImapClientWithoutId)
+    settings = EmailSettings(
+        host="imap.example.com",
+        username="operations@example.com",
+        password="authorization-code",
+    )
+
+    with ImapMailboxGateway(settings):
+        pass
+
+    client = FakeImapClient.instances[0]
+    assert client.client_id is None
+    assert client.events == ["login", "select"]

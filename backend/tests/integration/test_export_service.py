@@ -23,12 +23,16 @@ from app.db.models import (
 )
 from app.db.session import DatabaseManager
 from app.services.export_service import DailyExcelExportService
+from app.services.foundation_service import FoundationService
 
 
 @pytest.fixture
 def export_database(tmp_path: Path):
     manager = DatabaseManager(f"sqlite:///{(tmp_path / 'export.db').as_posix()}")
     Base.metadata.create_all(manager.engine)
+    with manager.session_factory() as session, session.begin():
+        FoundationService(_settings(tmp_path)).ensure(session)
+    manager.session_factory.configure(info={"tenant_id": 1, "mailbox_ids": (1,)})
     yield manager
     manager.dispose()
 
@@ -48,6 +52,8 @@ def _settings(tmp_path: Path) -> Settings:
 def _seed_export_data(database: DatabaseManager) -> None:
     with database.session_factory() as session, session.begin():
         email = EmailRecord(
+            tenant_id=1,
+            mailbox_account_id=1,
             mailbox="imap.example.com/INBOX",
             mailbox_key="mailbox-key",
             uid_validity="100",
@@ -61,6 +67,8 @@ def _seed_export_data(database: DatabaseManager) -> None:
         session.add(email)
         session.flush()
         attachment = AttachmentRecord(
+            tenant_id=1,
+            mailbox_account_id=1,
             email_id=email.id,
             original_name="托管净值.xlsx",
             stored_path="2026/07/24/attachments/托管净值.xlsx",
@@ -72,6 +80,8 @@ def _seed_export_data(database: DatabaseManager) -> None:
         session.flush()
         session.add(
             FundNav(
+                tenant_id=1,
+                mailbox_account_id=1,
                 product_name="吉余宸锋金炜幸福一号私募证券投资基金",
                 product_code="SAWK26",
                 nav_date=date(2026, 7, 24),
@@ -89,6 +99,8 @@ def _seed_export_data(database: DatabaseManager) -> None:
         session.add_all(
             [
                 ExceptionRecord(
+                    tenant_id=1,
+                    mailbox_account_id=1,
                     email_id=email.id,
                     attachment_id=attachment.id,
                     exception_type="duplicate_nav",
@@ -104,6 +116,8 @@ def _seed_export_data(database: DatabaseManager) -> None:
                     create_time=datetime(2026, 7, 24, 10, tzinfo=UTC),
                 ),
                 ExceptionRecord(
+                    tenant_id=1,
+                    mailbox_account_id=1,
                     email_id=email.id,
                     attachment_id=attachment.id,
                     exception_type="empty_nav",
@@ -123,13 +137,16 @@ def test_export_service_writes_dated_report_and_success_job(
     service = DailyExcelExportService(
         _settings(tmp_path),
         export_database.session_factory,
+        tenant_id=1,
+        mailbox_ids=(1,),
         clock=lambda: datetime(2026, 7, 24, 12, tzinfo=UTC),
     )
 
     result = service.export(date(2026, 7, 24))
 
     assert result.output_path == (
-        tmp_path / "data/2026/07/24/exports/每日基金净值汇总.xlsx"
+        tmp_path
+        / "data/tenants/1/mailboxes/1/2026/07/24/exports/每日基金净值汇总.xlsx"
     )
     assert result.output_path.is_file()
     assert result.nav_count == 1
@@ -153,7 +170,10 @@ def test_export_failure_preserves_previous_file_and_marks_job_failed(
     tmp_path: Path,
 ) -> None:
     settings = _settings(tmp_path)
-    output_path = tmp_path / "data/2026/07/24/exports/每日基金净值汇总.xlsx"
+    output_path = (
+        tmp_path
+        / "data/tenants/1/mailboxes/1/2026/07/24/exports/每日基金净值汇总.xlsx"
+    )
     output_path.parent.mkdir(parents=True)
     output_path.write_bytes(b"previous valid report")
 
@@ -165,6 +185,8 @@ def test_export_failure_preserves_previous_file_and_marks_job_failed(
     service = DailyExcelExportService(
         settings,
         export_database.session_factory,
+        tenant_id=1,
+        mailbox_ids=(1,),
         workbook_builder=FailingBuilder(),
         clock=lambda: datetime(2026, 7, 24, 12, tzinfo=UTC),
     )

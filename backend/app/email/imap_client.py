@@ -12,6 +12,7 @@ from typing import Any
 from imapclient import IMAPClient
 from imapclient.exceptions import IMAPClientError, LoginError
 
+from app import __version__
 from app.core.config import EmailSettings
 from app.email.models import MailboxMessage
 
@@ -88,6 +89,7 @@ class ImapMailboxGateway:
                     self.settings.username,
                     self.settings.password.get_secret_value(),
                 )
+            self._identify_client_if_supported(client)
             folder_info = client.select_folder(self.settings.folder, readonly=True)
             uid_validity = self._get_response_value(
                 folder_info,
@@ -170,6 +172,28 @@ class ImapMailboxGateway:
         if self._client is None:
             raise MailboxConnectionError("IMAP 客户端尚未连接")
         return self._client
+
+    @staticmethod
+    def _identify_client_if_supported(client: IMAPClient) -> None:
+        """向支持 RFC 2971 ID 的服务器声明客户端身份。
+
+        网易163会在登录成功后校验客户端 ID；未发送 ID 时，选择 INBOX
+        可能返回 ``Unsafe Login``。不支持 ID 的 QQ、Outlook 或普通企业
+        邮箱保持原流程；服务器声明支持但拒绝 ID 时也继续尝试只读选箱。
+        """
+
+        if not client.has_capability("ID"):
+            return
+        try:
+            client.id_(
+                {
+                    "name": "FundNavMailReader",
+                    "version": __version__,
+                    "vendor": "LocalFundOperations",
+                }
+            )
+        except IMAPClientError:
+            logger.warning("IMAP 服务器拒绝客户端 ID，继续尝试选择邮箱目录")
 
     @staticmethod
     def _get_response_value(message_data: dict[Any, Any], keys: tuple[Any, ...]) -> Any:

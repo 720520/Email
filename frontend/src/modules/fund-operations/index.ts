@@ -1,4 +1,4 @@
-import { DataAnalysis, Document, House, MessageBox, Warning } from '@element-plus/icons-vue'
+import { Collection, DataAnalysis, Document, House, Message, MessageBox, Warning } from '@element-plus/icons-vue'
 
 import type { BusinessModule } from '@/platform/modules/types'
 
@@ -10,7 +10,9 @@ export const fundOperationsModule: BusinessModule = {
   navigation: [
     { path: '/overview', title: '运营概览', icon: House },
     { path: '/emails', title: '邮件管理', icon: MessageBox },
+    { path: '/mailboxes', title: '邮箱账户', icon: Message },
     { path: '/fund-nav', title: '基金净值', icon: DataAnalysis },
+    { path: '/fund-products', title: '产品要素', icon: Collection },
     { path: '/exceptions', title: '异常管理', icon: Warning },
     { path: '/operations', title: '人工处理', icon: Document, permission: 'operator' },
   ],
@@ -28,10 +30,22 @@ export const fundOperationsModule: BusinessModule = {
       meta: { title: '邮件管理' },
     },
     {
+      path: '/mailboxes',
+      name: 'mailboxes',
+      component: () => import('./views/MailboxAccountsView.vue'),
+      meta: { title: '邮箱账户' },
+    },
+    {
       path: '/fund-nav',
       name: 'fund-nav',
       component: () => import('./views/FundNavView.vue'),
       meta: { title: '基金净值' },
+    },
+    {
+      path: '/fund-products',
+      name: 'fund-products',
+      component: () => import('./views/FundProductsView.vue'),
+      meta: { title: '产品要素' },
     },
     {
       path: '/exceptions',

@@ -12,6 +12,8 @@ _NAMED_CLASS_PATTERNS = (
     re.compile(r"^(?P<base>.+(?:基金|计划))(?P<class>[ABC])$", re.IGNORECASE),
 )
 _CODE_CLASS_PATTERN = re.compile(r"\((?P<class>[ABC])(?:类|级)\)$", re.IGNORECASE)
+_TOTAL_CODE_PATTERN = re.compile(r"\(总\)$")
+_CODE_QUALIFIER_PATTERN = re.compile(r"\((?:总|[ABC](?:类|级))\)$", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,9 +38,12 @@ def fund_display_identity(product_name: str, product_code: str) -> FundDisplayId
             )
 
     code_match = _CODE_CLASS_PATTERN.search(normalized_code)
-    share_class = (
-        f"{code_match.group('class').upper()}类" if code_match is not None else None
-    )
+    if _TOTAL_CODE_PATTERN.search(normalized_code):
+        share_class = "总份额"
+    else:
+        share_class = (
+            f"{code_match.group('class').upper()}类" if code_match is not None else None
+        )
     return FundDisplayIdentity(group_name=normalized_name, share_class=share_class)
 
 
@@ -46,10 +51,30 @@ def fund_display_sort_key(product_name: str, product_code: str) -> tuple[str, in
     """同一基金相邻展示，普通份额在前，随后依次为 A/B/C 类。"""
 
     identity = fund_display_identity(product_name, product_code)
-    class_order = {None: 0, "A类": 1, "B类": 2, "C类": 3}
+    class_order = {"总份额": 0, None: 1, "A类": 2, "B类": 3, "C类": 4}
     return (
         identity.group_name.casefold(),
         class_order.get(identity.share_class, 99),
         product_name.casefold(),
         product_code.casefold(),
     )
+
+
+def master_product_identity(
+    *,
+    product_name: str,
+    product_code: str,
+    registration_code: str | None = None,
+    parent_product_code: str | None = None,
+    parent_product_name: str | None = None,
+) -> tuple[str, str]:
+    """确定基金主体身份；份额代码保留在净值快照，主档优先采用备案代码。"""
+
+    display = fund_display_identity(product_name, product_code)
+    master_code = (
+        registration_code
+        or parent_product_code
+        or _CODE_QUALIFIER_PATTERN.sub("", product_code).strip()
+    )
+    master_name = parent_product_name or display.group_name
+    return master_code.strip().upper(), master_name.strip()

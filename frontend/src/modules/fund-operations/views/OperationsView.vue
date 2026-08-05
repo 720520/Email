@@ -2,21 +2,25 @@
 import { DocumentChecked, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { UploadFile, UploadFiles, UploadInstance, UploadRawFile } from 'element-plus'
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { apiErrorMessage } from '@/platform/api/http'
 
-import { uploadForReparse } from '../api'
-import type { ManualReparseResult } from '../api/types'
+import { getMailboxes, uploadForReparse } from '../api'
+import type { MailboxAccount, ManualReparseResult } from '../api/types'
 
 const upload = ref<UploadInstance>()
 const selectedFile = ref<UploadRawFile>()
 const sourceAttachmentId = ref<number>()
+const mailboxAccountId = ref<number>()
+const mailboxes = ref<MailboxAccount[]>([])
 const submitting = ref(false)
 const result = ref<ManualReparseResult>()
-const canSubmit = computed(() => Boolean(selectedFile.value) && !submitting.value)
+const canSubmit = computed(
+  () => Boolean(selectedFile.value && mailboxAccountId.value) && !submitting.value,
+)
 
 function onChange(file: UploadFile, files: UploadFiles) {
   selectedFile.value = file.raw
@@ -33,7 +37,11 @@ async function submit() {
   if (!selectedFile.value) return
   submitting.value = true
   try {
-    result.value = await uploadForReparse(selectedFile.value, sourceAttachmentId.value)
+    result.value = await uploadForReparse(
+      selectedFile.value,
+      sourceAttachmentId.value,
+      mailboxAccountId.value,
+    )
     ElMessage.success('文件重新解析完成')
     upload.value?.clearFiles()
     selectedFile.value = undefined
@@ -43,6 +51,19 @@ async function submit() {
     submitting.value = false
   }
 }
+
+onMounted(async () => {
+  try {
+    mailboxes.value = (await getMailboxes()).filter(
+      (item) => item.is_enabled && item.permissions.can_operate,
+    )
+    mailboxAccountId.value = (
+      mailboxes.value.find((item) => item.is_default) ?? mailboxes.value[0]
+    )?.id
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  }
+})
 </script>
 
 <template>
@@ -72,6 +93,12 @@ async function submit() {
             <template #tip><div class="el-upload__tip">文件将归档到当前日期目录；数据库仍按“产品代码 + 日期”防重复。</div></template>
           </el-upload>
           <el-form label-position="top" class="source-link-form">
+            <el-form-item label="归属邮箱">
+              <el-select v-model="mailboxAccountId" placeholder="选择该附件所属邮箱" style="width: 320px">
+                <el-option v-for="item in mailboxes" :key="item.id" :label="`${item.display_name} · ${item.username}`" :value="item.id" />
+              </el-select>
+              <span class="form-help">人工上传的数据、归档和审计记录都将绑定到所选邮箱。</span>
+            </el-form-item>
             <el-form-item label="关联原附件 ID（可选）">
               <el-input-number v-model="sourceAttachmentId" :min="1" :controls="false" placeholder="用于审计追溯" style="width: 220px" />
               <span class="form-help">如果来自某条失败附件，可填写其 ID 建立来源关联。</span>

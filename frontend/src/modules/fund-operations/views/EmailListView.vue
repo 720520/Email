@@ -8,12 +8,12 @@ import { useRoute } from 'vue-router'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { apiErrorMessage } from '@/platform/api/http'
-import { useAuthStore } from '@/platform/auth/auth.store'
 
 import EmailDetailDialog from '../components/EmailDetailDialog.vue'
 import {
   getEmailConnectionInfo,
   getEmails,
+  getMailboxes,
   syncEmailNow,
   testEmailConnection,
 } from '../api'
@@ -23,16 +23,18 @@ import type {
   EmailItem,
   EmailStatus,
   EmailSyncResult,
+  MailboxAccount,
 } from '../api/types'
 
 const route = useRoute()
-const auth = useAuthStore()
 const loading = ref(false)
 const connectionLoading = ref(false)
 const syncLoading = ref(false)
 const connectionInfo = ref<EmailConnectionInfo>()
 const connectionResult = ref<EmailConnectionTest>()
 const syncResult = ref<EmailSyncResult>()
+const mailboxes = ref<MailboxAccount[]>([])
+const selectedMailboxId = ref<number>()
 const rows = ref<EmailItem[]>([])
 const selectedEmailId = ref<number | null>(null)
 const detailVisible = ref(false)
@@ -43,9 +45,13 @@ const filters = reactive({
   dates: [] as string[],
   page: 1,
   pageSize: 20,
+  mailboxAccountId: '' as number | '',
 })
+const selectedMailbox = computed(
+  () => mailboxes.value.find((item) => item.id === selectedMailboxId.value),
+)
 const canTestConnection = computed(
-  () => auth.user?.role === 'admin' || auth.user?.role === 'operator',
+  () => selectedMailbox.value?.permissions.can_operate === true,
 )
 
 const statusOptions: Array<{ value: EmailStatus; label: string }> = [
@@ -68,6 +74,7 @@ async function loadRows() {
       status: filters.status || undefined,
       date_from: filters.dates[0] || undefined,
       date_to: filters.dates[1] || undefined,
+      mailbox_account_id: filters.mailboxAccountId || undefined,
     })
     rows.value = data.items
     total.value = data.total
@@ -79,8 +86,12 @@ async function loadRows() {
 }
 
 async function loadConnectionInfo() {
+  if (!selectedMailboxId.value) {
+    connectionInfo.value = undefined
+    return
+  }
   try {
-    connectionInfo.value = await getEmailConnectionInfo()
+    connectionInfo.value = await getEmailConnectionInfo(selectedMailboxId.value)
   } catch (error) {
     ElMessage.error(apiErrorMessage(error))
   }
@@ -90,7 +101,7 @@ async function checkConnection() {
   connectionLoading.value = true
   connectionResult.value = undefined
   try {
-    connectionResult.value = await testEmailConnection()
+    connectionResult.value = await testEmailConnection(selectedMailboxId.value)
     if (connectionResult.value.success) ElMessage.success('邮箱连接成功')
     else ElMessage.error(connectionResult.value.message)
   } catch (error) {
@@ -104,7 +115,7 @@ async function synchronizeMailbox() {
   syncLoading.value = true
   syncResult.value = undefined
   try {
-    syncResult.value = await syncEmailNow()
+    syncResult.value = await syncEmailNow(selectedMailboxId.value)
     if (syncResult.value.success) {
       ElMessage.success(syncResult.value.message)
       // 已匹配邮件会立即进入成功或部分成功，不再停留在“已发现”。
@@ -130,6 +141,7 @@ function reset() {
   filters.keyword = ''
   filters.status = ''
   filters.dates = []
+  filters.mailboxAccountId = ''
   filters.page = 1
   void loadRows()
 }
@@ -140,9 +152,23 @@ function openEmail(row: EmailItem) {
 }
 
 watch(() => filters.pageSize, search)
-onMounted(() => {
-  void loadRows()
+watch(selectedMailboxId, () => {
+  connectionResult.value = undefined
+  syncResult.value = undefined
   void loadConnectionInfo()
+})
+onMounted(async () => {
+  try {
+    mailboxes.value = await getMailboxes()
+    selectedMailboxId.value = (
+      mailboxes.value.find((item) => item.is_default && item.is_enabled)
+      ?? mailboxes.value.find((item) => item.is_enabled)
+      ?? mailboxes.value[0]
+    )?.id
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  }
+  await loadRows()
 })
 </script>
 
@@ -170,21 +196,26 @@ onMounted(() => {
           <h2>当前邮箱连接</h2>
           <p>展示后端实际加载的 IMAP 配置；授权码和访问令牌不会返回页面</p>
         </div>
-        <el-button
-          v-if="canTestConnection"
-          type="primary"
-          plain
-          :icon="Connection"
-          :loading="connectionLoading"
-          :disabled="!connectionInfo?.configured"
-          @click="checkConnection"
-        >检测连接</el-button>
+        <div class="mailbox-panel__actions">
+          <el-select v-model="selectedMailboxId" placeholder="选择邮箱" style="width: 230px">
+            <el-option v-for="item in mailboxes" :key="item.id" :label="item.display_name" :value="item.id" :disabled="!item.is_enabled" />
+          </el-select>
+          <el-button
+            v-if="canTestConnection"
+            type="primary"
+            plain
+            :icon="Connection"
+            :loading="connectionLoading"
+            :disabled="!connectionInfo?.configured"
+            @click="checkConnection"
+          >检测连接</el-button>
+        </div>
       </div>
       <div v-if="connectionInfo" class="mailbox-panel__body">
         <div class="mailbox-identity">
           <span class="mailbox-identity__icon"><el-icon><Connection /></el-icon></span>
           <div>
-            <small>IMAP 邮箱账号</small>
+            <small>{{ connectionInfo.display_name }}</small>
             <strong>{{ connectionInfo.username || '未配置账号' }}</strong>
             <span>{{ connectionInfo.host || '未配置服务器' }}<template v-if="connectionInfo.host">:{{ connectionInfo.port }}</template></span>
           </div>
@@ -240,6 +271,11 @@ onMounted(() => {
         <el-form-item label="主题或发送人">
           <el-input v-model="filters.keyword" clearable placeholder="输入关键词" style="width: 260px" @keyup.enter="search" />
         </el-form-item>
+        <el-form-item label="邮箱账户">
+          <el-select v-model="filters.mailboxAccountId" clearable placeholder="全部邮箱" style="width: 190px">
+            <el-option v-for="item in mailboxes" :key="item.id" :label="item.display_name" :value="item.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="解析状态">
           <el-select v-model="filters.status" clearable placeholder="全部状态" style="width: 160px">
             <el-option v-for="option in statusOptions" :key="option.value" :label="option.label" :value="option.value" />
@@ -257,6 +293,7 @@ onMounted(() => {
 
     <section class="panel data-panel">
       <el-table v-loading="loading" :data="rows" empty-text="没有符合条件的邮件记录">
+        <el-table-column prop="mailbox_name" label="邮箱" min-width="140" show-overflow-tooltip />
         <el-table-column label="主题" min-width="300" show-overflow-tooltip>
           <template #default="{ row }"><strong class="table-primary">{{ row.subject }}</strong></template>
         </el-table-column>

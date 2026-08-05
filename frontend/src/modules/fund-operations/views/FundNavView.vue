@@ -7,8 +7,8 @@ import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/platform/api/http'
 
 import NavHistoryChart from '../components/NavHistoryChart.vue'
-import { downloadDailyExport, getFundHistory, getFundNav, getLatestFundNavDate, searchProducts } from '../api'
-import type { FundHistory, FundNavItem, ProductOption } from '../api/types'
+import { downloadDailyExport, getFundHistory, getFundNav, getLatestFundNavDate, getMailboxes, searchProducts } from '../api'
+import type { FundHistory, FundNavItem, MailboxAccount, ProductOption } from '../api/types'
 import { resolveExportDate } from '../utils/export-date'
 import { groupProductOptions, productOptionLabel } from '../utils/product-options'
 
@@ -19,12 +19,19 @@ const productsLoading = ref(false)
 const rows = ref<FundNavItem[]>([])
 const total = ref(0)
 const latestNavDate = ref<string | null>(null)
-const filters = reactive({ productCode: '', dates: [] as string[], page: 1, pageSize: 20 })
+const filters = reactive({
+  productCode: '',
+  mailboxAccountId: '' as number | '',
+  dates: [] as string[],
+  page: 1,
+  pageSize: 20,
+})
 
 const historyVisible = ref(false)
 const historyLoading = ref(false)
 const selectedProductCode = ref('')
 const productOptions = ref<ProductOption[]>([])
+const mailboxes = ref<MailboxAccount[]>([])
 const history = ref<FundHistory>()
 const exportDate = computed(() => resolveExportDate(filters.dates, latestNavDate.value))
 const groupedProductOptions = computed(() => groupProductOptions(productOptions.value))
@@ -43,6 +50,7 @@ async function loadRows() {
       product_code: filters.productCode || undefined,
       date_from: filters.dates[0] || undefined,
       date_to: filters.dates[1] || undefined,
+      mailbox_account_id: filters.mailboxAccountId || undefined,
     })
     rows.value = data.items
     total.value = data.total
@@ -76,7 +84,7 @@ async function loadProductOptions() {
 }
 
 function search() { filters.page = 1; void loadRows() }
-function reset() { filters.productCode = ''; filters.dates = []; filters.page = 1; void loadRows() }
+function reset() { filters.productCode = ''; filters.mailboxAccountId = ''; filters.dates = []; filters.page = 1; void loadRows() }
 
 async function exportReport() {
   if (!exportDate.value) {
@@ -116,7 +124,9 @@ function showHistory(productCode: string) {
 
 watch(selectedProductCode, (value) => { if (value) void loadHistory(value) })
 watch(() => filters.pageSize, search)
-onMounted(() => {
+onMounted(async () => {
+  try { mailboxes.value = await getMailboxes() }
+  catch (error) { ElMessage.error(apiErrorMessage(error)) }
   void loadRows()
   void loadLatestNavDate()
   void loadProductOptions()
@@ -168,6 +178,11 @@ onMounted(() => {
         <el-form-item label="估值日期">
           <el-date-picker v-model="filters.dates" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" />
         </el-form-item>
+        <el-form-item label="来源邮箱">
+          <el-select v-model="filters.mailboxAccountId" clearable placeholder="全部邮箱" style="width: 190px">
+            <el-option v-for="item in mailboxes" :key="item.id" :label="item.display_name" :value="item.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item class="filter-actions">
           <el-button :icon="Search" type="primary" @click="search">查询</el-button>
           <el-button @click="reset">重置</el-button>
@@ -188,7 +203,7 @@ onMounted(() => {
         <el-table-column label="单位净值" width="126" align="right"><template #default="{ row }"><strong class="numeric">{{ row.unit_nav ?? '—' }}</strong></template></el-table-column>
         <el-table-column label="累计净值" width="126" align="right"><template #default="{ row }"><span class="numeric">{{ row.total_nav ?? '—' }}</span></template></el-table-column>
         <el-table-column label="资产净值" width="170" align="right"><template #default="{ row }"><span class="numeric">{{ formatMoney(row.asset_value) }}</span></template></el-table-column>
-        <el-table-column label="来源" min-width="170" show-overflow-tooltip><template #default="{ row }"><span class="source-text">{{ row.source_file }}</span></template></el-table-column>
+        <el-table-column label="来源" min-width="190" show-overflow-tooltip><template #default="{ row }"><span>{{ row.mailbox_name }}</span><small class="cell-secondary">{{ row.source_file }}</small></template></el-table-column>
         <el-table-column label="操作" width="92" fixed="right"><template #default="{ row }"><el-button text type="primary" :icon="DataLine" @click="showHistory(row.product_code)">曲线</el-button></template></el-table-column>
       </el-table>
       <div class="pagination-wrap">

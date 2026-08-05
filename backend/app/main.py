@@ -16,6 +16,7 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware
 from app.db.session import get_database_manager
+from app.services.foundation_service import FoundationService
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,9 @@ def _lifespan(settings: Settings):
         settings.log_directory.mkdir(parents=True, exist_ok=True)
         database = get_database_manager()
         database.check_connection()
+        with database.session_factory() as session, session.begin():
+            session.info["skip_tenant_scope"] = True
+            FoundationService(settings).ensure(session)
         logger.info(
             "后端服务启动完成",
             extra={"environment": settings.app.environment, "version": __version__},
@@ -68,4 +72,3 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
-

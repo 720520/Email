@@ -138,6 +138,8 @@ class SecuritySettings(BaseModel):
     """本地管理后台的会话安全配置。"""
 
     secret_key: SecretStr = SecretStr("development-only-secret-change-me")
+    credential_encryption_key: SecretStr = SecretStr("")
+    audit_signing_key: SecretStr = SecretStr("")
     session_cookie_name: str = "fund_nav_session"
     session_ttl_minutes: int = Field(default=480, ge=15, le=10080)
     secure_cookie: bool = False
@@ -189,6 +191,11 @@ class Settings(BaseSettings):
             secret == "development-only-secret-change-me" or len(secret) < 32
         ):
             raise ValueError("生产环境必须通过环境变量配置至少 32 位的 security.secret_key")
+        if self.app.environment == "production" and not (
+            self.security.credential_encryption_key.get_secret_value()
+            and self.security.audit_signing_key.get_secret_value()
+        ):
+            raise ValueError("生产环境必须分别配置邮箱凭据加密密钥和审计签名密钥")
         return self
 
     @classmethod

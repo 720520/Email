@@ -12,3 +12,6 @@ def bind_request_id(request_id: str) -> Token[str]:
 def reset_request_id(token: Token[str]) -> None:
     request_id_context.reset(token)
 
+
+def current_request_id() -> str:
+    return request_id_context.get()

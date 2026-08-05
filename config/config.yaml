@@ -1,5 +1,5 @@
 app:
-  name: 基金运营邮件自动解析与净值汇总系统
+  name: "基金运营邮件自动解析与净值汇总系统"
   environment: development
   debug: false
   api_prefix: /api/v1
@@ -18,10 +18,11 @@ logging:
   max_bytes: 10485760
   backup_count: 10
 
+# 本文件只保留通用默认值。实际邮箱建议登录后台后写入加密的 mailbox_account。
 email:
-  host: "imap.qq.com"
+  host: ""
   port: 993
-  username: "2106492986@qq.com"
+  username: ""
   auth_mode: password
   password: ""
   oauth2_access_token: ""

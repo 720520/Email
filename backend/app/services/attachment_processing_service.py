@@ -10,6 +10,7 @@ from typing import Protocol
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.models import AttachmentRecord, AttachmentStatus
+from app.db.session import configure_tenant_scope
 from app.parsers.models import WorkbookParseResult
 from app.services.persistence_service import NavPersistenceResult, NavPersistenceService
 
@@ -29,15 +30,24 @@ class AttachmentProcessingService:
         *,
         data_directory: Path,
         parser: WorkbookParser,
+        tenant_id: int,
+        mailbox_account_id: int,
         persistence: NavPersistenceService | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.data_directory = data_directory.resolve()
         self.parser = parser
+        self.tenant_id = tenant_id
+        self.mailbox_account_id = mailbox_account_id
         self.persistence = persistence or NavPersistenceService()
 
     def process(self, attachment_id: int) -> NavPersistenceResult | None:
         with self.session_factory() as session:
+            configure_tenant_scope(
+                session,
+                tenant_id=self.tenant_id,
+                mailbox_ids=(self.mailbox_account_id,),
+            )
             attachment = session.get(AttachmentRecord, attachment_id)
             if attachment is None:
                 raise ValueError(f"附件记录不存在: {attachment_id}")
@@ -81,6 +91,11 @@ class AttachmentProcessingService:
 
         parse_result = self.parser.parse_file(path)
         with self.session_factory() as session, session.begin():
+            configure_tenant_scope(
+                session,
+                tenant_id=self.tenant_id,
+                mailbox_ids=(self.mailbox_account_id,),
+            )
             return self.persistence.persist(
                 session,
                 attachment_id=attachment_id,
@@ -97,6 +112,11 @@ class AttachmentProcessingService:
     ) -> NavPersistenceResult:
         logger.error(message, extra={"attachment_id": attachment_id})
         with self.session_factory() as session, session.begin():
+            configure_tenant_scope(
+                session,
+                tenant_id=self.tenant_id,
+                mailbox_ids=(self.mailbox_account_id,),
+            )
             return self.persistence.persist_processing_failure(
                 session,
                 attachment_id=attachment_id,

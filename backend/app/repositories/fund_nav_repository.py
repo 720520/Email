@@ -25,13 +25,15 @@ class FundNavRepository:
     def find_by_business_key(
         session: Session,
         *,
+        tenant_id: int,
         product_code: str,
         nav_date: date,
     ) -> FundNav | None:
         statement = select(FundNav).where(
+            FundNav.tenant_id == tenant_id,
             FundNav.product_code == product_code,
             FundNav.nav_date == nav_date,
-        )
+        ).execution_options(skip_mailbox_scope=True)
         return session.scalar(statement)
 
     def insert_if_absent(self, session: Session, candidate: FundNav) -> NavInsertResult:
@@ -39,6 +41,7 @@ class FundNavRepository:
 
         existing = self.find_by_business_key(
             session,
+            tenant_id=candidate.tenant_id,
             product_code=candidate.product_code,
             nav_date=candidate.nav_date,
         )
@@ -53,6 +56,7 @@ class FundNavRepository:
             # 唯一约束可能被另一事务抢先写入；保存点回滚后外层事务仍可记录异常。
             existing = self.find_by_business_key(
                 session,
+                tenant_id=candidate.tenant_id,
                 product_code=candidate.product_code,
                 nav_date=candidate.nav_date,
             )

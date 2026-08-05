@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings
+from app.core.credential_security import audit_signing_key
 from app.core.files import atomic_write_bytes
 from app.db.models import (
     AttachmentRecord,
@@ -25,9 +26,11 @@ from app.db.models import (
     JobType,
     TriggerType,
 )
+from app.db.session import configure_tenant_scope
 from app.parsers.service import ExcelParserService
 from app.services.archive_service import sanitize_filename
 from app.services.attachment_processing_service import AttachmentProcessingService
+from app.services.audit_service import AuditService
 
 logger = logging.getLogger(__name__)
 
@@ -48,14 +51,26 @@ class ManualReparseService:
         self,
         settings: Settings,
         session_factory: sessionmaker[Session],
+        *,
+        tenant_id: int,
+        mailbox_account_id: int,
+        actor_user_id: int,
+        actor_username: str,
     ) -> None:
         self.settings = settings
         self.session_factory = session_factory
+        self.tenant_id = tenant_id
+        self.mailbox_account_id = mailbox_account_id
+        self.actor_user_id = actor_user_id
+        self.actor_username = actor_username
+        self.audit = AuditService(audit_signing_key(settings.security))
         self.timezone = ZoneInfo(settings.storage.archive_timezone)
         self.processor = AttachmentProcessingService(
             session_factory,
             data_directory=settings.data_directory,
             parser=ExcelParserService(settings),
+            tenant_id=tenant_id,
+            mailbox_account_id=mailbox_account_id,
         )
 
     def process(
@@ -77,6 +92,7 @@ class ManualReparseService:
             raise ValueError("上传文件超过配置的附件大小限制")
         if source_attachment_id is not None:
             with self.session_factory() as session:
+                self._scope(session)
                 if session.get(AttachmentRecord, source_attachment_id) is None:
                     raise ValueError("原附件记录不存在")
 
@@ -86,6 +102,10 @@ class ManualReparseService:
         safe_name = sanitize_filename(filename)
         stored_path = (
             self.settings.data_directory
+            / "tenants"
+            / str(self.tenant_id)
+            / "mailboxes"
+            / str(self.mailbox_account_id)
             / f"{local_date.year:04d}"
             / f"{local_date.month:02d}"
             / f"{local_date.day:02d}"
@@ -129,7 +149,11 @@ class ManualReparseService:
 
     def _start_job(self, now: datetime) -> int:
         with self.session_factory() as session, session.begin():
+            self._scope(session)
             job = JobRun(
+                tenant_id=self.tenant_id,
+                mailbox_account_id=self.mailbox_account_id,
+                triggered_by_user_id=self.actor_user_id,
                 job_type=JobType.MANUAL_UPLOAD,
                 trigger_type=TriggerType.MANUAL,
                 status=JobStatus.RUNNING,
@@ -137,6 +161,17 @@ class ManualReparseService:
             )
             session.add(job)
             session.flush()
+            self.audit.append(
+                session,
+                tenant_id=self.tenant_id,
+                actor_user_id=self.actor_user_id,
+                actor_username=self.actor_username,
+                mailbox_account_id=self.mailbox_account_id,
+                action="attachment.reparse.start",
+                resource_type="job_run",
+                resource_id=job.id,
+                outcome="started",
+            )
             return job.id
 
     def _create_records(
@@ -155,7 +190,10 @@ class ManualReparseService:
         if source_attachment_id is not None:
             subject = f"{subject}（替代附件 #{source_attachment_id}）"
         with self.session_factory() as session, session.begin():
+            self._scope(session)
             email = EmailRecord(
+                tenant_id=self.tenant_id,
+                mailbox_account_id=self.mailbox_account_id,
                 job_run_id=job_run_id,
                 mailbox="manual-upload",
                 mailbox_key="manual-upload",
@@ -170,6 +208,8 @@ class ManualReparseService:
             session.add(email)
             session.flush()
             attachment = AttachmentRecord(
+                tenant_id=self.tenant_id,
+                mailbox_account_id=self.mailbox_account_id,
                 email_id=email.id,
                 original_name=filename,
                 stored_path=stored_path.relative_to(self.settings.data_directory).as_posix(),
@@ -185,6 +225,7 @@ class ManualReparseService:
         success = status == AttachmentStatus.SUCCESS
         partial = status in {AttachmentStatus.PARTIAL_SUCCESS, AttachmentStatus.DUPLICATE}
         with self.session_factory() as session, session.begin():
+            self._scope(session)
             job = session.get(JobRun, job_run_id)
             if job is None:
                 raise RuntimeError("人工解析任务记录不存在")
@@ -198,22 +239,47 @@ class ManualReparseService:
             )
             job.success_count = 1 if success else 0
             job.failure_count = 0 if success else 1
+            self.audit.append(
+                session,
+                tenant_id=self.tenant_id,
+                actor_user_id=self.actor_user_id,
+                actor_username=self.actor_username,
+                mailbox_account_id=self.mailbox_account_id,
+                action="attachment.reparse.finish",
+                resource_type="job_run",
+                resource_id=job.id,
+                outcome=job.status.value,
+            )
 
     def _mark_job_failed(self, job_run_id: int, message: str) -> None:
         try:
             with self.session_factory() as session, session.begin():
+                self._scope(session)
                 job = session.get(JobRun, job_run_id)
                 if job is not None:
                     job.finished_at = datetime.now(UTC)
                     job.status = JobStatus.FAILED
                     job.failure_count = 1
                     job.error_message = message[:4000]
+                    self.audit.append(
+                        session,
+                        tenant_id=self.tenant_id,
+                        actor_user_id=self.actor_user_id,
+                        actor_username=self.actor_username,
+                        mailbox_account_id=self.mailbox_account_id,
+                        action="attachment.reparse.finish",
+                        resource_type="job_run",
+                        resource_id=job.id,
+                        outcome="failed",
+                        detail={"error": message[:1000]},
+                    )
         except Exception:
             logger.critical("人工解析任务失败状态回写失败", exc_info=True)
 
     def _has_attachment_record(self, stored_path: Path) -> bool:
         relative_path = stored_path.relative_to(self.settings.data_directory).as_posix()
         with self.session_factory() as session:
+            self._scope(session)
             return (
                 session.scalar(
                     select(AttachmentRecord.id).where(
@@ -222,3 +288,10 @@ class ManualReparseService:
                 )
                 is not None
             )
+
+    def _scope(self, session: Session) -> None:
+        configure_tenant_scope(
+            session,
+            tenant_id=self.tenant_id,
+            mailbox_ids=(self.mailbox_account_id,),
+        )

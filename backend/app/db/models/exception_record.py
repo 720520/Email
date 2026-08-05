@@ -10,14 +10,14 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.db.models.enums import ExceptionSeverity, ExceptionStatus
-from app.db.models.mixins import CreatedAtMixin
+from app.db.models.mixins import CreatedAtMixin, MailboxOwnedMixin
 from app.db.types import UTCDateTime
 
 if TYPE_CHECKING:
     from app.db.models.email_record import AttachmentRecord, EmailRecord
 
 
-class ExceptionRecord(CreatedAtMixin, Base):
+class ExceptionRecord(MailboxOwnedMixin, CreatedAtMixin, Base):
     __tablename__ = "exception_record"
     __table_args__ = (
         Index("ix_exception_record_status_create_time", "status", "create_time"),

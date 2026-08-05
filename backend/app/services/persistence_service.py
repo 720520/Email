@@ -21,7 +21,10 @@ from app.db.models import (
     ExceptionRecord,
     ExceptionSeverity,
     FundNav,
+    FundProduct,
 )
+from app.db.session import configure_tenant_scope
+from app.domain.fund_identity import master_product_identity
 from app.email.models import ArchivedEmail, MailboxMessage, ParsedEmail
 from app.parsers.models import IssueSeverity, ParseIssue, StandardNavRecord, WorkbookParseResult
 from app.repositories import EmailRepository, ExceptionRepository, FundNavRepository
@@ -56,9 +59,13 @@ class MailArchivePersistenceService:
         self,
         data_directory: Path,
         *,
+        tenant_id: int,
+        mailbox_account_id: int,
         repository: EmailRepository | None = None,
     ) -> None:
         self.data_directory = data_directory.resolve()
+        self.tenant_id = tenant_id
+        self.mailbox_account_id = mailbox_account_id
         self.repository = repository or EmailRepository()
         self.exception_repository = ExceptionRepository()
 
@@ -76,7 +83,8 @@ class MailArchivePersistenceService:
     ) -> ArchivePersistenceResult:
         existing = self.repository.find_by_uid(
             session,
-            mailbox_key=mailbox_key,
+            tenant_id=self.tenant_id,
+            mailbox_account_id=self.mailbox_account_id,
             uid_validity=uid_validity,
             message_uid=str(source.uid),
         )
@@ -93,6 +101,8 @@ class MailArchivePersistenceService:
             for item in archive.attachments
         )
         email = EmailRecord(
+            tenant_id=self.tenant_id,
+            mailbox_account_id=self.mailbox_account_id,
             job_run_id=job_run_id,
             mailbox=mailbox,
             mailbox_key=mailbox_key,
@@ -117,6 +127,8 @@ class MailArchivePersistenceService:
             suffix = archived_attachment.stored_path.suffix.casefold()
             supported = suffix in {".xls", ".xlsx"}
             attachment = AttachmentRecord(
+                tenant_id=self.tenant_id,
+                mailbox_account_id=self.mailbox_account_id,
                 email_id=email.id,
                 original_name=archived_attachment.original_name,
                 stored_path=self._stored_path(archived_attachment.stored_path),
@@ -132,6 +144,8 @@ class MailArchivePersistenceService:
             self.exception_repository.add(
                 session,
                 ExceptionRecord(
+                    tenant_id=self.tenant_id,
+                    mailbox_account_id=self.mailbox_account_id,
                     email_id=email.id,
                     exception_type="no_supported_excel_attachment",
                     severity=ExceptionSeverity.ERROR,
@@ -207,13 +221,41 @@ class NavPersistenceService:
 
             # 基金代码统一去空格并转大写，防止大小写差异绕过业务唯一键。
             product_code = record.product_code.strip().upper()
+            master_code, master_name = master_product_identity(
+                product_name=record.product_name,
+                product_code=product_code,
+                registration_code=record.registration_code,
+                parent_product_code=record.parent_product_code,
+                parent_product_name=record.parent_product_name,
+            )
             candidate = FundNav(
+                tenant_id=attachment.tenant_id,
+                mailbox_account_id=attachment.mailbox_account_id,
                 product_name=record.product_name.strip(),
                 product_code=product_code,
+                master_product_code=master_code,
+                asset_code=self._identifier(record.asset_code),
+                registration_code=self._identifier(record.registration_code),
+                share_class=record.share_class,
                 nav_date=record.nav_date,
                 unit_nav=record.unit_nav,
                 total_nav=record.total_nav,
                 asset_value=record.asset_value,
+                asset_share=record.asset_share,
+                paid_in_capital=record.paid_in_capital,
+                holding_shares=record.holding_shares,
+                reference_market_value=record.reference_market_value,
+                total_assets=record.total_assets,
+                total_assets_nav_ratio=record.total_assets_nav_ratio,
+                investor_name=record.investor_name,
+                investor_account=record.investor_account,
+                parent_unit_nav=record.parent_unit_nav,
+                parent_total_nav=record.parent_total_nav,
+                parent_asset_value=record.parent_asset_value,
+                parent_product_code=self._identifier(record.parent_product_code),
+                parent_product_name=record.parent_product_name,
+                notes=record.notes,
+                parent_paid_in_capital=record.parent_paid_in_capital,
                 source_file=record.source_file,
                 source_sheet=record.source_sheet,
                 source_row=record.source_row,
@@ -223,6 +265,13 @@ class NavPersistenceService:
             )
             insertion = self.nav_repository.insert_if_absent(session, candidate)
             if insertion.inserted:
+                self._upsert_product(
+                    session,
+                    attachment=attachment,
+                    record=record,
+                    master_code=master_code,
+                    master_name=master_name,
+                )
                 inserted_count += 1
                 continue
 
@@ -261,6 +310,61 @@ class NavPersistenceService:
             status=status,
         )
 
+    @staticmethod
+    def _identifier(value: str | None) -> str | None:
+        return value.strip().upper() if value and value.strip() else None
+
+    @staticmethod
+    def _upsert_product(
+        session: Session,
+        *,
+        attachment: AttachmentRecord,
+        record: StandardNavRecord,
+        master_code: str,
+        master_name: str,
+    ) -> FundProduct:
+        """同步产品主档；人工经理/策略覆盖永远不被附件写入改动。"""
+
+        product = next(
+            (
+                item
+                for item in session.new
+                if isinstance(item, FundProduct)
+                and item.tenant_id == attachment.tenant_id
+                and item.product_code == master_code
+            ),
+            None,
+        )
+        if product is None:
+            product = session.scalar(
+                select(FundProduct).where(
+                    FundProduct.tenant_id == attachment.tenant_id,
+                    FundProduct.product_code == master_code,
+                )
+            )
+        if product is None:
+            product = FundProduct(
+                tenant_id=attachment.tenant_id,
+                product_code=master_code,
+                product_name=master_name,
+            )
+            session.add(product)
+
+        is_latest = (
+            product.latest_source_date is None
+            or record.nav_date is None
+            or record.nav_date >= product.latest_source_date
+        )
+        if is_latest:
+            product.product_name = master_name
+            product.latest_source_file = record.source_file
+            product.latest_source_date = record.nav_date
+            if record.investment_manager_info:
+                product.source_investment_manager_info = record.investment_manager_info
+            if record.investment_strategy_info:
+                product.source_investment_strategy_info = record.investment_strategy_info
+        return product
+
     def persist_processing_failure(
         self,
         session: Session,
@@ -278,6 +382,8 @@ class NavPersistenceService:
         self.exception_repository.add(
             session,
             ExceptionRecord(
+                tenant_id=attachment.tenant_id,
+                mailbox_account_id=attachment.mailbox_account_id,
                 email_id=attachment.email_id,
                 attachment_id=attachment.id,
                 exception_type=exception_type,
@@ -306,6 +412,8 @@ class NavPersistenceService:
         self.exception_repository.add(
             session,
             ExceptionRecord(
+                tenant_id=attachment.tenant_id,
+                mailbox_account_id=attachment.mailbox_account_id,
                 email_id=attachment.email_id,
                 attachment_id=attachment.id,
                 exception_type=issue.code.value,
@@ -329,6 +437,8 @@ class NavPersistenceService:
         self.exception_repository.add(
             session,
             ExceptionRecord(
+                tenant_id=attachment.tenant_id,
+                mailbox_account_id=attachment.mailbox_account_id,
                 email_id=attachment.email_id,
                 attachment_id=attachment.id,
                 exception_type="duplicate_nav",
@@ -356,6 +466,8 @@ class NavPersistenceService:
         self.exception_repository.add(
             session,
             ExceptionRecord(
+                tenant_id=attachment.tenant_id,
+                mailbox_account_id=attachment.mailbox_account_id,
                 email_id=attachment.email_id,
                 attachment_id=attachment.id,
                 exception_type="invalid_standard_record",
@@ -433,13 +545,21 @@ class DatabaseArchiveRecorder:
         *,
         data_directory: Path,
         mailbox: str,
+        tenant_id: int,
+        mailbox_account_id: int,
         job_run_id: int | None = None,
         attachment_processor: AttachmentProcessor | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.mailbox = mailbox
+        self.tenant_id = tenant_id
+        self.mailbox_account_id = mailbox_account_id
         self.job_run_id = job_run_id
-        self.persistence = MailArchivePersistenceService(data_directory)
+        self.persistence = MailArchivePersistenceService(
+            data_directory,
+            tenant_id=tenant_id,
+            mailbox_account_id=mailbox_account_id,
+        )
         self.attachment_processor = attachment_processor
 
     def record(
@@ -452,6 +572,11 @@ class DatabaseArchiveRecorder:
         archive: ArchivedEmail,
     ) -> ArchivePersistenceResult:
         with self.session_factory() as session, session.begin():
+            configure_tenant_scope(
+                session,
+                tenant_id=self.tenant_id,
+                mailbox_ids=(self.mailbox_account_id,),
+            )
             persisted = self.persistence.persist(
                 session,
                 mailbox=self.mailbox,
@@ -464,6 +589,11 @@ class DatabaseArchiveRecorder:
             )
         if self.attachment_processor is not None and persisted.attachment_ids:
             with self.session_factory() as session:
+                configure_tenant_scope(
+                    session,
+                    tenant_id=self.tenant_id,
+                    mailbox_ids=(self.mailbox_account_id,),
+                )
                 processable_ids = tuple(
                     session.scalars(
                         select(AttachmentRecord.id).where(

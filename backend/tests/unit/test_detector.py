@@ -33,7 +33,7 @@ def test_detect_single_fund_with_title_metadata_and_two_line_header() -> None:
     assert detection.header_start_row == 2
     assert detection.header_row_count == 2
     assert set(detection.field_columns) == {
-        "product_code",
+        "asset_code",
         "product_name",
         "unit_nav",
         "total_nav",

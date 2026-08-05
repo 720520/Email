@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ArrowDown, Expand, Fold, Grid, SwitchButton } from '@element-plus/icons-vue'
+import { ArrowDown, Check, Expand, Fold, Grid, OfficeBuilding, SwitchButton } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
+import { ElMessage } from 'element-plus'
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { businessModules } from '@/modules'
+import { apiErrorMessage } from '@/platform/api/http'
 import { useAuthStore } from '@/platform/auth/auth.store'
 import type { UserRole } from '@/platform/api/types'
 
@@ -25,12 +27,27 @@ const visibleModules = computed(() =>
     ...module,
     navigation: module.navigation.filter((item) => {
       if (!item.permission || !auth.user) return true
+      if (auth.user.is_platform_admin) return true
       return roleRank[auth.user.role] >= roleRank[item.permission]
     }),
   })),
 )
 
 const roleLabel = computed(() => ({ admin: '管理员', operator: '运营人员', viewer: '只读用户' })[auth.user?.role ?? 'viewer'])
+const currentTenantName = computed(() => auth.user?.tenant_name ?? '未选择租户')
+
+async function switchTenant(command: string | number) {
+  const tenantId = Number(command)
+  if (!tenantId || tenantId === auth.user?.tenant_id) return
+  try {
+    await auth.switchTenant(tenantId)
+    ElMessage.success(`已切换到 ${auth.user?.tenant_name}`)
+    await router.replace('/overview')
+    window.location.reload()
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  }
+}
 
 async function signOut() {
   await auth.logout()
@@ -105,6 +122,26 @@ function navigate(path: string) {
           <div><small>当前业务模块</small><strong>{{ currentModule?.title ?? '运营工作台' }}</strong></div>
         </div>
         <div class="topbar__right">
+          <el-dropdown trigger="click" @command="switchTenant">
+            <button class="tenant-switcher" :title="`当前租户：${currentTenantName}`">
+              <el-icon><OfficeBuilding /></el-icon>
+              <span><small>当前租户</small><strong>{{ currentTenantName }}</strong></span>
+              <el-icon v-if="auth.tenants.length > 1"><ArrowDown /></el-icon>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item
+                  v-for="tenant in auth.tenants"
+                  :key="tenant.id"
+                  :command="tenant.id"
+                  :disabled="tenant.is_current"
+                >
+                  <el-icon v-if="tenant.is_current"><Check /></el-icon>
+                  <span class="tenant-dropdown-item"><strong>{{ tenant.name }}</strong><small>{{ tenant.code }}</small></span>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
           <span class="business-date">{{ dayjs().format('YYYY年MM月DD日') }}</span>
           <el-dropdown trigger="click">
             <button class="user-menu">

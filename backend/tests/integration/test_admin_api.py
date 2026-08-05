@@ -7,10 +7,8 @@ from email.message import EmailMessage
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.core.security import PasswordHasher
 from app.db.base import Base
 from app.db.models import (
-    AppUser,
     AttachmentRecord,
     AttachmentStatus,
     EmailRecord,
@@ -18,13 +16,16 @@ from app.db.models import (
     ExceptionRecord,
     ExceptionSeverity,
     FundNav,
+    FundProduct,
     UserRole,
 )
 
 
 def _seed_admin_data() -> int:
     from app.core.config import get_settings
-    from app.db.session import get_database_manager
+    from app.db.session import configure_tenant_scope, get_database_manager
+    from app.services.auth_service import AuthService
+    from app.services.foundation_service import FoundationService
 
     manager = get_database_manager()
     Base.metadata.create_all(manager.engine)
@@ -37,15 +38,22 @@ def _seed_admin_data() -> int:
     eml_path.parent.mkdir(parents=True, exist_ok=True)
     eml_path.write_bytes(message.as_bytes())
     with manager.session_factory() as session, session.begin():
-        user = AppUser(
+        identity = FoundationService(get_settings()).ensure(session)
+        AuthService().create_user(
+            session,
             username="admin",
-            password_hash=PasswordHasher().hash("AdminPass!2026"),
+            password="AdminPass!2026",
             role=UserRole.ADMIN,
-            token_version=1,
-            is_active=True,
+            tenant_id=identity.tenant_id,
         )
-        session.add(user)
+        configure_tenant_scope(
+            session,
+            tenant_id=identity.tenant_id,
+            mailbox_ids=(identity.mailbox_account_id,),
+        )
         email = EmailRecord(
+            tenant_id=identity.tenant_id,
+            mailbox_account_id=identity.mailbox_account_id,
             mailbox="imap.example.com/INBOX",
             mailbox_key="api-mailbox",
             uid_validity="1",
@@ -60,6 +68,8 @@ def _seed_admin_data() -> int:
         session.add(email)
         session.flush()
         attachment = AttachmentRecord(
+            tenant_id=identity.tenant_id,
+            mailbox_account_id=identity.mailbox_account_id,
             email_id=email.id,
             original_name="净值.xlsx",
             stored_path="2026/07/29/attachments/净值.xlsx",
@@ -70,17 +80,39 @@ def _seed_admin_data() -> int:
         session.add(attachment)
         session.flush()
         nav = FundNav(
+            tenant_id=identity.tenant_id,
+            mailbox_account_id=identity.mailbox_account_id,
             product_name="吉余测试一号私募证券投资基金",
             product_code="JYTEST01",
+            master_product_code="JYTEST01",
+            asset_code="JYTEST01(总)",
+            registration_code="JYTEST01",
+            share_class="总份额",
             nav_date=date.today(),
             unit_nav=Decimal("1.12345678"),
             total_nav=Decimal("1.23456789"),
             asset_value=Decimal("10000000.0000"),
+            paid_in_capital=Decimal("9000000.0000"),
+            total_assets=Decimal("10010000.0000"),
+            total_assets_nav_ratio=Decimal("1.001"),
             source_file="净值.xlsx",
             attachment_id=attachment.id,
         )
         session.add(nav)
+        session.add(
+            FundProduct(
+                tenant_id=identity.tenant_id,
+                product_name="吉余测试一号私募证券投资基金",
+                product_code="JYTEST01",
+                source_investment_manager_info="附件经理信息",
+                source_investment_strategy_info="附件策略信息",
+                latest_source_file="净值.xlsx",
+                latest_source_date=date.today(),
+            )
+        )
         exception = ExceptionRecord(
+            tenant_id=identity.tenant_id,
+            mailbox_account_id=identity.mailbox_account_id,
             email_id=email.id,
             attachment_id=attachment.id,
             exception_type="empty_nav",
@@ -91,6 +123,8 @@ def _seed_admin_data() -> int:
         session.add(exception)
         session.add(
             ExceptionRecord(
+                tenant_id=identity.tenant_id,
+                mailbox_account_id=identity.mailbox_account_id,
                 email_id=email.id,
                 attachment_id=attachment.id,
                 exception_type="custodian_specific_warning",
@@ -129,6 +163,13 @@ def test_login_and_protected_operational_queries(app: FastAPI) -> None:
             "/api/v1/fund-nav/history",
             params={"product_code": "jytest01"},
         )
+        product_summary = client.get("/api/v1/fund-products/summary")
+        product_list = client.get("/api/v1/fund-products")
+        product_detail = client.get("/api/v1/fund-products/1")
+        product_updated = client.patch(
+            "/api/v1/fund-products/1/profile",
+            json={"investment_manager_info": "人工经理信息"},
+        )
         exceptions = client.get("/api/v1/exceptions", params={"category": "净值为空"})
         other_exceptions = client.get(
             "/api/v1/exceptions",
@@ -138,12 +179,21 @@ def test_login_and_protected_operational_queries(app: FastAPI) -> None:
             f"/api/v1/exceptions/{exception_id}/status",
             json={"status": "resolved"},
         )
+        audit_events = client.get("/api/v1/audit-events")
         logout = client.post("/api/v1/auth/logout")
         after_logout = client.get("/api/v1/auth/me")
 
     assert unauthorized.status_code == 401
     assert login.status_code == 200
-    assert login.json()["user"] == {"id": 1, "username": "admin", "role": "admin"}
+    assert login.json()["user"] == {
+        "id": 1,
+        "username": "admin",
+        "role": "admin",
+        "tenant_id": 1,
+        "tenant_code": "default",
+        "tenant_name": "默认业务账套",
+        "is_platform_admin": True,
+    }
     assert "HttpOnly" in login.headers["set-cookie"]
     assert dashboard.status_code == 200
     assert dashboard.json()["fund_count"] == 1
@@ -171,11 +221,21 @@ def test_login_and_protected_operational_queries(app: FastAPI) -> None:
     assert archived_products.json()[0]["product_code"] == "JYTEST01"
     assert archived_products.json()[0]["share_class"] is None
     assert history.json()["points"][0]["nav_date"] == date.today().isoformat()
+    assert product_summary.json()["product_count"] == 1
+    assert product_summary.json()["latest_asset_value"] == "10000000.0000"
+    assert product_list.json()["items"][0]["share_count"] == 1
+    assert product_detail.json()["latest_snapshots"][0]["available_field_count"] >= 9
+    assert product_updated.json()["investment_manager_info"] == "人工经理信息"
+    assert product_updated.json()["investment_manager_manual"] is True
+    assert product_updated.json()["source_investment_manager_info"] == "附件经理信息"
     assert exceptions.json()["items"][0]["category"] == "净值为空"
     assert other_exceptions.json()["total"] == 1
     assert exceptions.json()["items"][0]["email_id"] == 1
     assert other_exceptions.json()["items"][0]["category"] == "其他异常"
     assert resolved.json()["status"] == "resolved"
+    assert audit_events.status_code == 200
+    assert audit_events.json()["total"] >= 5
+    assert all(item["event_hash"] for item in audit_events.json()["items"])
     assert logout.status_code == 204
     assert after_logout.status_code == 401
 
@@ -195,16 +255,15 @@ def test_login_failure_uses_generic_message(app: FastAPI) -> None:
 def test_viewer_can_read_but_cannot_change_exception_status(app: FastAPI) -> None:
     exception_id = _seed_admin_data()
     from app.db.session import get_database_manager
+    from app.services.auth_service import AuthService
 
     with get_database_manager().session_factory() as session, session.begin():
-        session.add(
-            AppUser(
-                username="viewer",
-                password_hash=PasswordHasher().hash("ViewerPass!2026"),
-                role=UserRole.VIEWER,
-                token_version=1,
-                is_active=True,
-            )
+        AuthService().create_user(
+            session,
+            username="viewer",
+            password="ViewerPass!2026",
+            role=UserRole.VIEWER,
+            tenant_id=1,
         )
     with TestClient(app) as client:
         login = client.post(
@@ -219,6 +278,10 @@ def test_viewer_can_read_but_cannot_change_exception_status(app: FastAPI) -> Non
         )
         connection_forbidden = client.post("/api/v1/emails/connection/test")
         sync_forbidden = client.post("/api/v1/emails/sync")
+        product_profile_forbidden = client.patch(
+            "/api/v1/fund-products/1/profile",
+            json={"investment_manager_info": "越权修改"},
+        )
 
     assert login.status_code == 200
     assert readable.status_code == 200
@@ -226,3 +289,4 @@ def test_viewer_can_read_but_cannot_change_exception_status(app: FastAPI) -> Non
     assert forbidden.status_code == 403
     assert connection_forbidden.status_code == 403
     assert sync_forbidden.status_code == 403
+    assert product_profile_forbidden.status_code == 403

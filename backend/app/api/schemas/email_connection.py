@@ -7,6 +7,8 @@ from pydantic import BaseModel
 
 
 class EmailConnectionInfoResponse(BaseModel):
+    mailbox_account_id: int
+    display_name: str
     host: str
     port: int
     username: str

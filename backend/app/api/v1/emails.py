@@ -4,11 +4,16 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import FileResponse
 from sqlalchemy import func, or_, select
 
-from app.api.deps import CurrentUser, DatabaseSession, require_roles
+from app.api.deps import (
+    TenantContext,
+    TenantDatabaseSession,
+    TenantScope,
+    require_roles,
+)
 from app.api.schemas.common import PageResponse
 from app.api.schemas.email_connection import (
     EmailConnectionInfoResponse,
@@ -17,11 +22,18 @@ from app.api.schemas.email_connection import (
 )
 from app.api.schemas.email_detail import EmailAttachmentDetail, EmailDetailResponse
 from app.api.schemas.operations import EmailListItem
-from app.core.config import get_settings
+from app.core.config import EmailSettings, get_settings
+from app.core.credential_security import (
+    CredentialDecryptionError,
+    audit_signing_key,
+    dedicated_audit_key_configured,
+    dedicated_credential_key_configured,
+)
 from app.core.errors import AppError
-from app.db.models import AppUser, EmailRecord, EmailStatus, TriggerType, UserRole
+from app.db.models import EmailRecord, EmailStatus, MailboxAccount, TriggerType, UserRole
 from app.db.session import get_database_manager
 from app.services.archive_service import sanitize_filename
+from app.services.audit_service import AuditService
 from app.services.email_connection_service import EmailConnectionService
 from app.services.email_detail_service import (
     EmailDetailService,
@@ -29,36 +41,85 @@ from app.services.email_detail_service import (
     InvalidEmailArchivePathError,
 )
 from app.services.mail_sync_runner import MailSyncAlreadyRunningError, MailSyncRunner
+from app.services.mailbox_account_service import (
+    MailboxAccountNotFoundError,
+    MailboxAccountService,
+)
 
 router = APIRouter()
-OperatorUser = Annotated[
-    AppUser,
+OperatorScope = Annotated[
+    TenantContext,
     Depends(require_roles(UserRole.ADMIN, UserRole.OPERATOR)),
 ]
 
 
 @router.get("/connection", response_model=EmailConnectionInfoResponse)
-def email_connection_info(user: CurrentUser) -> EmailConnectionInfoResponse:
-    del user
-    settings = get_settings().email
-    service = EmailConnectionService(settings)
+def email_connection_info(
+    session: TenantDatabaseSession,
+    scope: TenantScope,
+    mailbox_account_id: int | None = Query(default=None, ge=1),
+) -> EmailConnectionInfoResponse:
+    account = _selected_account(
+        session,
+        scope,
+        mailbox_account_id=mailbox_account_id,
+        allowed_mailbox_ids=scope.mailbox_ids,
+    )
+    credential_configured = bool(account.credential_ciphertext)
     return EmailConnectionInfoResponse(
-        host=settings.host,
-        port=settings.port,
-        username=settings.username,
-        auth_mode=settings.auth_mode,
-        folder=settings.folder,
-        transport=service.transport,
-        timeout_seconds=settings.timeout_seconds,
-        credential_configured=service.credential_configured,
-        configured=service.configured,
+        mailbox_account_id=account.id,
+        display_name=account.display_name,
+        host=account.host,
+        port=account.port,
+        username=account.username,
+        auth_mode=account.auth_mode,
+        folder=account.folder,
+        transport=(
+            "SSL/TLS" if account.use_ssl else "STARTTLS" if account.start_tls else "未加密"
+        ),
+        timeout_seconds=account.timeout_seconds,
+        credential_configured=credential_configured,
+        configured=bool(
+            account.is_enabled
+            and account.host.strip()
+            and account.username.strip()
+            and credential_configured
+        ),
     )
 
 
 @router.post("/connection/test", response_model=EmailConnectionTestResponse)
-def test_email_connection(user: OperatorUser) -> EmailConnectionTestResponse:
-    del user
-    result = EmailConnectionService(get_settings().email).test_connection()
+def test_email_connection(
+    request: Request,
+    session: TenantDatabaseSession,
+    scope: OperatorScope,
+    mailbox_account_id: int | None = Query(default=None, ge=1),
+) -> EmailConnectionTestResponse:
+    _require_security_ready()
+    account, settings = _selected_mailbox(
+        session,
+        scope,
+        mailbox_account_id=mailbox_account_id,
+        allowed_mailbox_ids=scope.operable_mailbox_ids,
+    )
+    result = EmailConnectionService(settings).test_connection()
+    MailboxAccountService.update_connection_result(
+        account,
+        success=result.success,
+        error_message=result.message,
+    )
+    _audit_email_action(
+        session,
+        scope,
+        request,
+        mailbox_id=account.id,
+        action="mailbox.connection.test",
+        resource_type="mailbox_account",
+        resource_id=account.id,
+        outcome="success" if result.success else "failure",
+        detail={"latency_ms": result.latency_ms, "message_count": result.message_count},
+    )
+    session.commit()
     return EmailConnectionTestResponse(
         success=result.success,
         message=result.message,
@@ -70,13 +131,28 @@ def test_email_connection(user: OperatorUser) -> EmailConnectionTestResponse:
 
 
 @router.post("/sync", response_model=EmailSyncResponse)
-def sync_email_now(user: OperatorUser) -> EmailSyncResponse:
-    del user
+def sync_email_now(
+    session: TenantDatabaseSession,
+    scope: OperatorScope,
+    mailbox_account_id: int | None = Query(default=None, ge=1),
+) -> EmailSyncResponse:
+    _require_security_ready()
     settings = get_settings()
+    account, email_settings = _selected_mailbox(
+        session,
+        scope,
+        mailbox_account_id=mailbox_account_id,
+        allowed_mailbox_ids=scope.operable_mailbox_ids,
+    )
     try:
         execution = MailSyncRunner(
             settings,
             get_database_manager().session_factory,
+            tenant_id=scope.tenant_id,
+            mailbox_account_id=account.id,
+            email_settings=email_settings,
+            actor_user_id=scope.user.id,
+            actor_username=scope.user.username,
         ).run(trigger_type=TriggerType.MANUAL)
     except MailSyncAlreadyRunningError as exc:
         raise AppError("MAIL_SYNC_RUNNING", str(exc), status_code=409) from exc
@@ -104,20 +180,24 @@ def sync_email_now(user: OperatorUser) -> EmailSyncResponse:
 
 @router.get("", response_model=PageResponse[EmailListItem])
 def list_emails(
-    session: DatabaseSession,
-    user: CurrentUser,
+    session: TenantDatabaseSession,
+    scope: TenantScope,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     keyword: str | None = Query(default=None, max_length=200),
     status: EmailStatus | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    mailbox_account_id: int | None = Query(default=None, ge=1),
 ) -> PageResponse[EmailListItem]:
-    del user
     if date_from and date_to and date_from > date_to:
         raise AppError("INVALID_DATE_RANGE", "开始日期不能晚于结束日期")
 
     conditions = []
+    if mailbox_account_id is not None:
+        if mailbox_account_id not in scope.mailbox_ids:
+            raise AppError("FORBIDDEN", "当前账号没有查看该邮箱的权限", status_code=403)
+        conditions.append(EmailRecord.mailbox_account_id == mailbox_account_id)
     if keyword and keyword.strip():
         search = keyword.strip()
         conditions.append(
@@ -136,7 +216,8 @@ def list_emails(
 
     total = session.scalar(select(func.count(EmailRecord.id)).where(*conditions)) or 0
     statement = (
-        select(EmailRecord)
+        select(EmailRecord, MailboxAccount.display_name)
+        .join(MailboxAccount, MailboxAccount.id == EmailRecord.mailbox_account_id)
         .where(*conditions)
         .order_by(EmailRecord.receive_time.desc(), EmailRecord.id.desc())
         .offset((page - 1) * page_size)
@@ -145,6 +226,8 @@ def list_emails(
     items = [
         EmailListItem(
             id=item.id,
+            mailbox_account_id=item.mailbox_account_id,
+            mailbox_name=mailbox_name,
             subject=item.subject,
             sender=item.sender,
             receive_time=item.receive_time,
@@ -152,7 +235,7 @@ def list_emails(
             status=item.status,
             error_message=item.error_message,
         )
-        for item in session.scalars(statement)
+        for item, mailbox_name in session.execute(statement)
     ]
     return PageResponse(items=items, total=total, page=page, page_size=page_size)
 
@@ -160,13 +243,15 @@ def list_emails(
 @router.get("/{email_id}", response_model=EmailDetailResponse)
 def get_email_detail(
     email_id: int,
-    session: DatabaseSession,
-    user: CurrentUser,
+    request: Request,
+    session: TenantDatabaseSession,
+    scope: TenantScope,
 ) -> EmailDetailResponse:
-    del user
     email = session.get(EmailRecord, email_id)
     if email is None:
         raise AppError("EMAIL_NOT_FOUND", "邮件记录不存在", status_code=404)
+    if not scope.can_read_content(email.mailbox_account_id):
+        raise AppError("FORBIDDEN", "当前账号没有查看邮件正文的权限", status_code=403)
 
     service = EmailDetailService(get_settings().data_directory)
     try:
@@ -177,28 +262,44 @@ def get_email_detail(
     except EmailPreviewTooLargeError:
         archive_path = service.resolve_archive_path(email.eml_path)
         preview_text = "原始邮件较大，正文无法在线预览，请下载 EML 文件查看。"
-        return _email_detail_response(email, preview_text, False, archive_path is not None)
+        response = _email_detail_response(email, preview_text, False, archive_path is not None)
+        _audit_email_action(
+            session, scope, request, mailbox_id=email.mailbox_account_id,
+            action="email.content.view", resource_type="email_record",
+            resource_id=email.id, outcome="success", detail={"preview_too_large": True},
+        )
+        session.commit()
+        return response
     except (OSError, ValueError) as exc:
         raise AppError("EMAIL_PREVIEW_FAILED", "原始邮件正文读取失败", status_code=422) from exc
 
-    return _email_detail_response(
+    response = _email_detail_response(
         email,
         preview.text,
         preview.truncated,
         archive_path is not None,
     )
+    _audit_email_action(
+        session, scope, request, mailbox_id=email.mailbox_account_id,
+        action="email.content.view", resource_type="email_record",
+        resource_id=email.id, outcome="success", detail={"body_truncated": preview.truncated},
+    )
+    session.commit()
+    return response
 
 
 @router.get("/{email_id}/raw", response_class=FileResponse)
 def download_raw_email(
     email_id: int,
-    session: DatabaseSession,
-    user: CurrentUser,
+    request: Request,
+    session: TenantDatabaseSession,
+    scope: TenantScope,
 ) -> FileResponse:
-    del user
     email = session.get(EmailRecord, email_id)
     if email is None:
         raise AppError("EMAIL_NOT_FOUND", "邮件记录不存在", status_code=404)
+    if not scope.can_read_content(email.mailbox_account_id):
+        raise AppError("FORBIDDEN", "当前账号没有下载原始邮件的权限", status_code=403)
     try:
         archive_path = EmailDetailService(get_settings().data_directory).resolve_archive_path(
             email.eml_path
@@ -209,7 +310,91 @@ def download_raw_email(
         raise AppError("EMAIL_ARCHIVE_NOT_FOUND", "该邮件没有可下载的原始归档", status_code=404)
 
     filename = sanitize_filename(f"{email.subject or 'email'}_{email.id}.eml")
+    _audit_email_action(
+        session, scope, request, mailbox_id=email.mailbox_account_id,
+        action="email.raw.download", resource_type="email_record",
+        resource_id=email.id, outcome="success",
+    )
+    session.commit()
     return FileResponse(archive_path, media_type="message/rfc822", filename=filename)
+
+
+def _selected_mailbox(
+    session,
+    scope: TenantContext,
+    *,
+    mailbox_account_id: int | None,
+    allowed_mailbox_ids: tuple[int, ...],
+) -> tuple[MailboxAccount, EmailSettings]:
+    account = _selected_account(
+        session,
+        scope,
+        mailbox_account_id=mailbox_account_id,
+        allowed_mailbox_ids=allowed_mailbox_ids,
+    )
+    service = MailboxAccountService(get_settings())
+    try:
+        return account, service.runtime_settings(account)
+    except CredentialDecryptionError as exc:
+        raise AppError(
+            "MAILBOX_CREDENTIAL_INVALID",
+            "邮箱凭据无法解密，请由管理员重新配置",
+            status_code=409,
+        ) from exc
+
+
+def _selected_account(
+    session,
+    scope: TenantContext,
+    *,
+    mailbox_account_id: int | None,
+    allowed_mailbox_ids: tuple[int, ...],
+) -> MailboxAccount:
+    service = MailboxAccountService(get_settings())
+    try:
+        if mailbox_account_id is None:
+            return service.get_default(
+                session,
+                tenant_id=scope.tenant_id,
+                allowed_mailbox_ids=allowed_mailbox_ids,
+            )
+        return service.get_account(
+            session,
+            tenant_id=scope.tenant_id,
+            mailbox_account_id=mailbox_account_id,
+            allowed_mailbox_ids=allowed_mailbox_ids,
+            require_enabled=True,
+        )
+    except MailboxAccountNotFoundError as exc:
+        raise AppError("MAILBOX_NOT_AVAILABLE", str(exc), status_code=409) from exc
+
+
+def _audit_email_action(
+    session,
+    scope: TenantContext,
+    request: Request,
+    *,
+    mailbox_id: int,
+    action: str,
+    resource_type: str,
+    resource_id: int,
+    outcome: str,
+    detail: dict | None = None,
+) -> None:
+    AuditService(audit_signing_key(get_settings().security)).append(
+        session,
+        tenant_id=scope.tenant_id,
+        actor_user_id=scope.user.id,
+        actor_username=scope.user.username,
+        mailbox_account_id=mailbox_id,
+        action=action,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        outcome=outcome,
+        detail=detail,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
 
 
 def _email_detail_response(
@@ -258,3 +443,16 @@ def _date_bounds(
         else None
     )
     return start, end
+
+
+def _require_security_ready() -> None:
+    security = get_settings().security
+    if not (
+        dedicated_credential_key_configured(security)
+        and dedicated_audit_key_configured(security)
+    ):
+        raise AppError(
+            "MAILBOX_SECURITY_NOT_READY",
+            "请先配置独立邮箱凭据密钥和审计签名密钥",
+            status_code=503,
+        )

@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from sqlalchemy import Boolean, Enum, Integer, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.db.models.enums import UserRole
@@ -28,5 +28,9 @@ class AppUser(TimestampMixin, Base):
         default=UserRole.OPERATOR,
     )
     token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    is_platform_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     last_login_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+    tenant_memberships = relationship("TenantMembership", back_populates="user")
+    mailbox_grants = relationship("MailboxUserGrant", back_populates="user")

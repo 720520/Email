@@ -11,6 +11,10 @@
 - 阶段 5（SQLite 数据存储与幂等导入）已完成。
 - 阶段 6（每日净值与异常 Excel 导出）已完成。
 - 阶段 7（Vue 运营后台、登录认证与人工重解析）已完成。
+- 多租户和多邮箱功能已开放：租户/成员、邮箱账户管理、四级邮箱授权、后端
+  强制作用域、AES-GCM 凭据加密、追加式审计日志及邮箱级归档均已接通。
+- 产品要素归纳已开放：托管附件中的 21 项表格字段按估值日留存，产品按备案代码归并，
+  投资经理与投资策略支持人工覆盖、恢复附件来源及审计留痕。
 
 ## 使用教程
 
@@ -30,11 +34,30 @@ email:
   start_tls: false
 ```
 
-在项目根目录的 `.env` 中填写邮箱授权码。QQ 企业邮箱等通常应使用授权码，而不是网页登录密码：
+旧版单邮箱可继续在项目根目录 `.env` 中填写授权码作为默认邮箱的一次性引导。多邮箱
+模式更推荐先创建管理员，再到“邮箱账户”页面逐个录入新授权码：
 
 ```dotenv
 FUND_NAV_EMAIL__PASSWORD=你的邮箱授权码
 ```
+
+首次启用时必须生成两个相互独立的 32 字节密钥。推荐执行以下命令：它只补齐 `.env`
+中缺失的密钥，不覆盖已有值，也不会在终端打印密钥内容：
+
+```powershell
+.\.venv\Scripts\python.exe -m app.cli.init_security_keys
+```
+
+执行后应重启后端。不要截图或复制 `.env` 中生成的值。
+
+`CREDENTIAL_ENCRYPTION_KEY` 用于 AES-256-GCM 邮箱凭据加密，
+`AUDIT_SIGNING_KEY` 用于审计日志 HMAC 哈希链。两者不得相同，也不得在已有密文后
+随意更换，否则旧邮箱授权码将无法解密、旧审计链将无法验证。开发环境未配置时后端
+可以以只读方式启动，但新增/编辑邮箱、连接检测、邮件同步和人工重解析会被安全门禁
+拒绝；生产环境缺少任一专用密钥时会直接拒绝启动。
+
+不要使用曾经发到聊天、工单或截图中的密钥和邮箱授权码。发生暴露时，应先在邮箱侧
+撤销授权码，再生成新的邮箱授权码和两把未展示过的本地业务密钥。
 
 Outlook / Microsoft 365 使用 OAuth2 时，参见下文“邮箱配置与人工同步”。
 
@@ -51,6 +74,12 @@ Set-Location "C:\Users\yyh01\Documents\Email"
 ```powershell
 .\.venv\Scripts\python.exe -m alembic -c backend\alembic.ini upgrade head
 ```
+
+该迁移会把现有单账套数据回填到“默认业务账套”和“默认邮箱”，为已有用户建立成员关系
+和邮箱授权，并把所有邮件、附件、净值、异常和任务记录补齐租户作用域。首次启动后，
+应用会把当前有效的邮箱授权码加密写入 `mailbox_account.credential_ciphertext`。确认页面
+连接检测成功后，可以清空 YAML 中的 `email.password`；本地 `.env` 可仅在首次迁移期间
+保留旧 `FUND_NAV_EMAIL__PASSWORD`。两个业务安全密钥必须长期保留。
 
 创建管理员账号。系统没有默认账号或默认密码，密码由你在终端中输入两次：
 
@@ -78,7 +107,35 @@ pnpm.cmd dev
 
 浏览器访问 <http://127.0.0.1:5173>，使用刚创建的管理员账号登录。后端 API 文档位于 <http://127.0.0.1:8000/docs>。
 
-登录后进入“邮件管理”，页面顶部会展示后端实际加载的邮箱服务器、端口、账号、认证方式、加密方式和邮箱目录。管理员或运营账号可点击“检测连接”，系统只执行 IMAP 建连、认证和只读目录选择，不读取邮件正文，也不会改变邮件已读状态。授权码和 OAuth2 令牌不会返回浏览器。连接正常后点击“立即同步”，系统才会搜索、匹配、归档并解析最近邮件；连接检测本身不会导入邮件。
+首次创建的管理员是“平台管理员”。登录后建议先进入“系统管理 → 租户与成员”：
+
+1. 新建真实业务租户，例如租户代码 `jiyu`、名称“吉余私募”；租户代码创建后不可修改。
+2. 再新建 `qianguo`、名称“千果私募”。平台管理员会自动成为新租户的租户管理员。
+3. 点击“成员”，为每个租户添加租户管理员、运营人员或只读用户。新用户名需要设置至少
+   10 位初始密码；平台管理员可把系统内已有用户名直接加入另一个租户，此时密码留空。
+   普通租户管理员不能关联其他租户已有身份，避免利用用户名探测或擅自建立跨租户关系。
+4. 使用页面顶部“当前租户”切换到目标租户，再到“邮箱账户”配置该租户自己的邮箱。
+5. 成员加入租户不会自动获得邮箱正文、同步或凭据权限，仍需在“邮箱账户 → 权限”单独授权。
+
+只属于一个租户的用户登录后直接进入该租户；属于多个租户的用户验证账号密码后，必须
+在登录页选择本次业务租户。进入系统后也可以从顶部切换，切换时后端会重新验证成员关系、
+签发绑定目标租户的新 Cookie，并重新加载页面，避免上一租户的页面缓存残留。
+
+登录后先进入“邮箱账户”。管理员可新增多个 IMAP 邮箱，或编辑初始化生成的“默认邮箱”；
+授权码/OAuth2 令牌只在保存时提交一次，页面和 API 永远不会回显明文或密文。每个邮箱
+可独立设置服务器、端口、账号、目录、回看天数、默认状态和启停状态。保存后先点击
+“检测”，成功后再点“同步”。连接检测只执行 IMAP 建连、认证和只读目录选择，不读取
+邮件正文，也不会改变邮件已读状态。
+
+管理员在“邮箱账户 → 权限”中按用户授予以下权限：
+
+- 元数据：查看邮箱账号和该邮箱产生的业务记录；
+- 邮件正文：预览正文、附件清单和下载原始 EML；
+- 连接/同步：测试连接、同步邮件、处置异常和人工重新解析；
+- 凭据管理：新增或更换授权码，仅允许租户管理员持有。
+
+“邮件管理”“基金净值”“异常管理”和“人工处理”都支持选择来源邮箱。后端会再次校验
+登录会话中的租户和邮箱授权，不能通过修改 URL 或请求参数访问未授权邮箱。
 
 停止系统时，在两个 PowerShell 窗口中分别按 `Ctrl+C`。
 
@@ -90,14 +147,22 @@ pnpm.cmd dev
 .\.venv\Scripts\python.exe -m app.cli.mail_sync
 ```
 
+省略 `--mailbox-id` 时同步默认邮箱；同步指定邮箱时使用“邮箱账户”页面显示的 ID：
+
+```powershell
+.\.venv\Scripts\python.exe -m app.cli.mail_sync --mailbox-id 2
+```
+
 同步完成后的推荐操作顺序：
 
 1. 在“运营概览”确认今日邮件数、解析成功数和待处理异常。
-2. 在“邮件管理”先检测邮箱连接，再查看每封邮件的归档与解析状态；点击“查看”可打开邮件正文和附件清单。
+2. 在“邮箱账户”选择目标邮箱检测连接并同步；再到“邮件管理”按来源邮箱查看处理状态。
 3. 在“基金净值”按产品或日期查询数据，并检查历史净值曲线。
-4. 在“异常管理”复核缺字段、空净值、重复数据和格式错误；点击异常右侧“查看”可核对其原始邮件。
-5. 附件解析失败时，在“人工处理”上传原 Excel 重新解析。
-6. 在“基金净值”页面选择业务日期并导出每日汇总 Excel。
+4. 在“产品要素”查看按备案代码归并的产品主体、A/B/C/总份额和最新 21 项托管字段；
+   经理、策略缺失或需要修订时可进入详情人工编辑，表格字段不可人工改写。
+5. 在“异常管理”复核缺字段、空净值、重复数据和格式错误；点击异常右侧“查看”可核对其原始邮件。
+6. 附件解析失败时，在“人工处理”上传原 Excel 重新解析。
+7. 在“基金净值”页面选择业务日期并导出每日汇总 Excel。
 
 也可以通过命令行导出指定日期：
 
@@ -112,10 +177,11 @@ pnpm.cmd dev
 ```text
 data/
 ├── fund_nav.db                    # SQLite 数据库
-└── YYYY/MM/DD/
-    ├── emails/                    # 原始邮件
-    ├── attachments/               # 原始及人工上传附件
-    └── exports/                   # 每日基金净值汇总.xlsx
+└── tenants/{tenant_id}/
+    └── mailboxes/{mailbox_account_id}/YYYY/MM/DD/
+        ├── emails/                # 原始邮件
+        ├── attachments/           # 原始及人工上传附件
+        └── exports/               # 每日基金净值汇总.xlsx
 ```
 
 ### 6. 常见问题
@@ -123,6 +189,7 @@ data/
 - PowerShell 提示 `pnpm.ps1 cannot be loaded`：使用 `pnpm.cmd dev`，不需要降低 PowerShell 安全策略。
 - 登录提示用户名或密码错误：确认已经执行管理员创建命令；系统不存在默认密码。
 - 邮箱认证失败：优先检查 IMAP 是否已启用、授权码是否正确，以及 `use_ssl` 与 `start_tls` 是否配置冲突。
+- 163 邮箱：使用 `imap.163.com:993`、SSL 和客户端授权码。系统在服务器声明支持 RFC 2971 `ID` 时，会在登录后发送不含账号和密钥的客户端标识，兼容163的 `Unsafe Login` 校验。
 - QQ 邮箱连接提示“账号或授权码验证失败”：在 QQ 邮箱设置中启用 IMAP 服务并重新生成授权码，将新授权码写入 `.env` 的 `FUND_NAV_EMAIL__PASSWORD`，然后重启后端。
 - 页面打不开：确认后端 `8000` 端口和前端 `5173` 端口的两个进程都仍在运行。
 - Excel 没有入库：前往“异常管理”查看缺失字段或格式识别信息，不要直接修改数据库。
@@ -198,7 +265,9 @@ Outlook / Microsoft 365 若租户要求现代认证，可将 `auth_mode` 改为 
 .\.venv\Scripts\python.exe -m app.cli.mail_sync
 ```
 
-同步过程不会修改邮件已读状态。候选邮件先按主题、附件名和 Excel 扩展名初筛，再归档到 `data/YYYY/MM/DD`；归档成功后会验证附件 SHA-256，调用阶段 4 解析器并把净值与异常写入数据库。
+同步过程不会修改邮件已读状态。候选邮件先按主题、附件名和 Excel 扩展名初筛，再归档到
+`data/tenants/{tenant_id}/mailboxes/{mailbox_account_id}/YYYY/MM/DD`；归档成功后会验证
+附件 SHA-256，调用解析器并把带相同租户/邮箱作用域的净值与异常写入数据库。
 
 ## Excel 格式兼容
 
@@ -219,14 +288,18 @@ Outlook / Microsoft 365 若租户要求现代认证，可将 `auth_mode` 改为 
 
 ## 数据库与幂等规则
 
-SQLite 默认文件为 `data/fund_nav.db`，当前迁移版本为 `20260729_0002`。核心表包括：
+SQLite 默认文件为 `data/fund_nav.db`，当前迁移版本为 `20260805_0005`。核心表包括：
 
-- `fund_nav`：标准化净值，数据库唯一键为 `product_code + nav_date`
+- `tenant` / `tenant_membership`：业务账套及用户在账套内的角色
+- `mailbox_account`：邮箱非敏感配置、AES-GCM 凭据密文和最近连接/同步状态
+- `mailbox_user_grant`：邮箱元数据、正文、操作和凭据管理四级授权
+- `fund_nav`：标准化净值，数据库唯一键为 `tenant_id + product_code + nav_date`
 - `email_record`：邮箱、UIDVALIDITY、UID、主题、发送人与处理状态
 - `attachment_record`：附件原名、归档路径、SHA-256 与解析状态
 - `exception_record`：格式、字段、重复、文件完整性等运营异常
 - `job_run`：定时任务与人工任务的执行审计
-- `app_user`：Web 后台账号、角色和会话失效版本
+- `app_user`：全局登录身份、平台管理员标记和会话失效版本；业务角色来自成员关系
+- `audit_event`：只追加、脱敏并由 HMAC 哈希链保护的合规操作记录
 
 净值写入仅提供新增语义，不提供覆盖接口。基金代码入库前会去除首尾空格并统一转成大写；同一产品代码和日期再次导入时，系统保留首次记录，并新增 `duplicate_nav` 异常。每个附件的净值、异常与状态在同一事务中提交，任一步骤失败会整体回滚。
 
@@ -250,7 +323,7 @@ SQLite 默认文件为 `data/fund_nav.db`，当前迁移版本为 `20260729_0002
 省略 `--date` 时，系统使用 `storage.archive_timezone` 配置的本地日期。报表保存到：
 
 ```text
-data/YYYY/MM/DD/exports/每日基金净值汇总.xlsx
+data/tenants/{tenant_id}/mailboxes/{mailbox_account_id}/YYYY/MM/DD/exports/每日基金净值汇总.xlsx
 ```
 
 Web“基金净值”页面的导出日期规则与 CLI 略有不同，更适合托管邮件延迟到达的运营场景：
@@ -273,12 +346,22 @@ Web“基金净值”页面的导出日期规则与 CLI 略有不同，更适合
 阶段 7 提供以下页面：
 
 - 运营概览：今日邮件、解析成功、基金数量、待处理异常与最新净值批次
+- 租户与成员：平台管理员创建/停用租户，租户管理员维护本租户成员及角色
+- 邮箱账户：新增、编辑、停用多组 IMAP 邮箱，逐邮箱检测/同步并管理用户授权；凭据不回显
 - 邮件管理：按关键词、收件日期和状态查询邮件审计记录，并安全预览原邮件或下载 `.eml` 归档
 - 基金净值：按产品与日期查询、导出日报、查看单产品历史净值曲线；产品筛选以下拉框展示数据库中已有历史净值的全部基金，同一基金的普通份额及 A/B/C 类份额归入同一分组并相邻排列
+- 产品要素：按备案代码归并产品主体，统计最新份额和资产规模，查看 21 项托管字段；
+  表格字段只读，投资经理和投资策略允许运营人员或管理员编辑并恢复附件来源
 - 异常管理：分类筛选、查看异常关联的原始邮件，并由运营人员完成解决、忽略或重新打开
 - 人工处理：上传失败的 `.xls` / `.xlsx` 重新解析，文件与操作记录独立归档
 
-账号分为 `admin`、`operator` 和 `viewer`。只读账号可以查询数据，但不能处置异常或执行人工重解析。前端采用业务模块注册机制，基金运营只是当前第一个模块；后续可通过独立模块接入对账、份额登记、指令管理等运营能力。详细说明见 [docs/stage-7-web.md](docs/stage-7-web.md)。
+租户角色分为 `admin`、`operator` 和 `viewer`，角色决定功能上限，邮箱授权决定实际资源范围。
+`is_platform_admin` 是独立的平台级能力，只允许创建、编辑和停用租户，不替代用户在各租户
+中的成员关系。平台管理员创建租户时，系统会自动为其建立该租户的 `admin` 成员关系。
+即使用户是运营角色，也必须获得目标邮箱的“连接/同步”权限后才能同步、处置异常或
+人工重解析。前端采用业务模块注册机制，基金运营只是当前第一个模块；后续可通过独立
+模块接入对账、份额登记、指令管理等运营能力。详细说明见
+[docs/stage-7-web.md](docs/stage-7-web.md)。
 
 ---
 
@@ -295,9 +378,13 @@ Web“基金净值”页面的导出日期规则与 CLI 略有不同，更适合
 | MIME 邮件及附件提取 | 已实现 | `email/mime_parser.py` |
 | EML、附件、清单归档 | 已实现 | `services/archive_service.py` |
 | XLS/XLSX 智能识别与标准化 | 已实现 | `parsers/` |
+| 产品要素快照、产品主档及说明维护 | 已实现 21 项表格字段、份额归并和人工说明留痕 | `db/models/fund_product.py`、`api/v1/fund_products.py`、`FundProductsView.vue` |
 | SQLite 持久化及幂等控制 | 已实现 | `db/`、`repositories/`、`services/persistence_service.py` |
 | 日报 Excel 导出 | 已实现 | `services/export_service.py`、`exports/` |
 | Web 登录及运营后台 | 已实现 | `api/`、`frontend/src/` |
+| 租户、成员和邮箱资源授权 | 已开放，支持登录选择、顶部切换、多邮箱和四级用户授权 | `api/v1/tenants.py`、`TenantManagementView.vue`、`api/v1/mailboxes.py` |
+| 邮箱凭据加密 | 已实现 AES-256-GCM，密文绑定租户和邮箱 ID | `core/credential_security.py` |
+| 合规审计日志 | 已实现追加写、脱敏和 HMAC 哈希链 | `services/audit_service.py`、`GET /api/v1/audit-events` |
 | 异常邮件正文查看及 EML 下载 | 已实现 | `services/email_detail_service.py`、`EmailDetailDialog.vue` |
 | 人工上传重新解析 | 已实现 | `services/manual_reparse_service.py` |
 | APScheduler 自动定时执行 | **尚未接入运行器**；当前只有 `scheduler` 配置模型 | 后续阶段 |
@@ -348,10 +435,11 @@ Email/
 ├── data/                                  # 运行数据；不提交业务文件
 │   ├── fund_nav.db                        # SQLite 数据库
 │   ├── .email_uid_state/                  # IMAP UID 处理中/已完成幂等标记
-│   └── YYYY/MM/DD/
-│       ├── emails/                        # 原始 .eml 和邮件 JSON 审计清单
-│       ├── attachments/                   # 原始附件与人工上传附件
-│       └── exports/                       # 每日基金净值汇总.xlsx
+│   └── tenants/{tenant_id}/
+│       └── mailboxes/{mailbox_account_id}/YYYY/MM/DD/
+│           ├── emails/                    # 原始 .eml 和邮件 JSON 审计清单
+│           ├── attachments/               # 原始附件与人工上传附件
+│           └── exports/                   # 每日基金净值汇总.xlsx
 ├── logs/
 │   └── backend.log                        # JSON 格式、按大小滚动的后端日志
 ├── backend/
@@ -363,33 +451,46 @@ Email/
 │   │   ├── script.py.mako                 # 新迁移脚本模板
 │   │   └── versions/
 │   │       ├── 20260728_0001_initial_schema.py  # 建立核心业务表、索引和约束
-│   │       └── 20260729_0002_user_roles.py      # 增加用户角色及令牌版本
+│   │       ├── 20260729_0002_user_roles.py      # 增加用户角色及令牌版本
+│   │       ├── 20260804_0003_tenant_mailbox_audit.py # 租户、邮箱、作用域和审计
+│   │       ├── 20260805_0004_multi_mailbox.py # 多邮箱配置来源、运行状态和单默认约束
+│   │       ├── 20260805_0005_tenant_management.py # 平台管理员标记和租户管理开放
+│   │       └── 20260805_0006_product_elements.py # 产品主档和每日托管要素快照
 │   ├── app/
 │   │   ├── __init__.py                    # 后端包版本
 │   │   ├── main.py                        # FastAPI 应用工厂、生命周期、中间件和总路由
 │   │   ├── api/
 │   │   │   ├── __init__.py                # API 包标记
-│   │   │   ├── deps.py                    # 数据库会话、当前用户和角色权限依赖
+│   │   │   ├── deps.py                    # 当前租户、邮箱授权、作用域会话和角色依赖
 │   │   │   ├── schemas/
 │   │   │   │   ├── __init__.py            # Schema 包标记
 │   │   │   │   ├── auth.py                # 登录、用户和会话响应结构
 │   │   │   │   ├── common.py              # 通用分页响应结构
 │   │   │   │   ├── email_connection.py    # 邮箱配置、连接检测和同步统计响应
 │   │   │   │   ├── email_detail.py        # 邮件正文和附件详情响应
-│   │   │   │   └── operations.py          # 概览、邮件、净值、异常、重解析响应
+│   │   │   │   ├── operations.py          # 概览、邮件、净值、异常、重解析响应
+│   │   │   │   ├── fund_product.py        # 产品统计、快照详情和说明编辑结构
+│   │   │   │   ├── audit.py               # 审计事件响应结构
+│   │   │   │   ├── mailbox.py             # 多邮箱配置、安全状态、成员和授权结构
+│   │   │   │   └── tenant.py              # 租户创建、编辑和成员关系结构
 │   │   │   └── v1/
 │   │   │       ├── __init__.py            # v1 路由包标记
 │   │   │       ├── router.py              # 汇总所有 `/api/v1` 子路由
-│   │   │       ├── auth.py                # 登录、退出、当前用户
+│   │   │       ├── auth.py                # 登录、租户选择/切换、退出和当前用户
+│   │   │       ├── tenants.py             # 平台租户和租户成员管理
 │   │   │       ├── health.py              # 存活和数据库就绪检查
 │   │   │       ├── dashboard.py           # 运营概览指标
-│   │   │       ├── emails.py              # 邮箱检测、同步、邮件列表、正文和 EML 下载
+│   │   │       ├── emails.py              # 按授权邮箱检测、同步、列表、正文和 EML 下载
+│   │   │       ├── mailboxes.py           # 多邮箱 CRUD、逐邮箱操作和用户授权
 │   │   │       ├── fund_nav.py            # 净值查询、产品搜索、历史曲线和日报下载
+│   │   │       ├── fund_products.py       # 产品要素统计、详情和经理/策略维护
 │   │   │       ├── exceptions.py          # 异常筛选及解决/忽略状态更新
-│   │   │       └── operations.py          # 人工上传 Excel 重新解析
+│   │   │       ├── operations.py          # 人工上传 Excel 重新解析
+│   │   │       └── audit.py               # 管理员租户内审计日志查询
 │   │   ├── cli/
 │   │   │   ├── __init__.py                # CLI 包标记
 │   │   │   ├── create_admin.py            # 创建或更新管理员账号
+│   │   │   ├── init_security_keys.py       # 不回显地初始化两把独立业务密钥
 │   │   │   ├── mail_sync.py               # 命令行触发一次邮箱同步
 │   │   │   └── export_daily.py            # 命令行导出指定业务日期日报
 │   │   ├── core/
@@ -400,23 +501,29 @@ Email/
 │   │   │   ├── files.py                   # 原子文件写入
 │   │   │   ├── logging.py                 # JSON 日志和滚动文件配置
 │   │   │   ├── middleware.py              # 请求 ID、耗时和访问日志中间件
-│   │   │   └── security.py                # PBKDF2 密码散列和签名会话令牌
+│   │   │   ├── security.py                # PBKDF2 密码散列和签名会话令牌
+│   │   │   └── credential_security.py     # AES-GCM 凭据加密和审计密钥派生
 │   │   ├── db/
 │   │   │   ├── __init__.py                # 数据库包标记
 │   │   │   ├── base.py                    # SQLAlchemy Declarative Base 与命名规则
-│   │   │   ├── session.py                 # Engine、SQLite PRAGMA、Session 工厂
+│   │   │   ├── session.py                 # Engine、默认拒绝及租户/邮箱自动过滤
 │   │   │   ├── types.py                   # UTC 时间数据库类型
 │   │   │   └── models/
 │   │   │       ├── __init__.py            # 集中导出全部 ORM 模型和枚举
 │   │   │       ├── app_user.py            # 后台用户
 │   │   │       ├── email_record.py        # 邮件记录和附件记录
 │   │   │       ├── fund_nav.py            # 标准基金净值
+│   │   │       ├── fund_product.py        # 备案主体主档和可编辑说明双层值
 │   │   │       ├── exception_record.py    # 文件、字段、重复等异常
 │   │   │       ├── job_run.py             # 同步、导出、人工任务审计
 │   │   │       ├── enums.py               # 邮件、附件、异常、任务、角色状态枚举
-│   │   │       └── mixins.py              # 创建时间和更新时间公共列
+│   │   │       ├── tenant.py              # 租户、成员关系和邮箱用户授权
+│   │   │       ├── mailbox_account.py     # 独立邮箱连接配置和凭据密文
+│   │   │       ├── audit_event.py         # 追加式合规审计事件
+│   │   │       └── mixins.py              # 时间、租户及邮箱作用域公共列
 │   │   ├── domain/
 │   │   │   ├── __init__.py                # 领域规则包标记
+│   │   │   ├── fund_identity.py           # 份额类别排序和备案主体归并规则
 │   │   │   └── exception_categories.py    # 底层异常代码到中文运营类别的映射
 │   │   ├── email/
 │   │   │   ├── __init__.py                # 邮件接入包标记
@@ -454,7 +561,10 @@ Email/
 │   │   │   ├── email_detail_service.py        # 安全读取原始邮件并将 HTML 转成纯文本
 │   │   │   ├── manual_reparse_service.py      # 人工附件归档、审计并复用统一解析链
 │   │   │   ├── export_service.py              # 查询日报数据、构建工作簿、原子发布
-│   │   │   └── auth_service.py                # 用户认证和账号创建
+│   │   │   ├── auth_service.py                # 用户认证和账号创建
+│   │   │   ├── foundation_service.py          # 单邮箱到默认租户/邮箱的兼容引导
+│   │   │   ├── mailbox_account_service.py     # 多邮箱配置、授权、凭据加解密和运行配置
+│   │   │   └── audit_service.py               # 审计脱敏、追加写和 HMAC 链校验
 │   │   └── exports/
 │   │       ├── __init__.py                # 集中导出日报构建对象
 │   │       ├── models.py                  # 日报净值行和异常行传输对象
@@ -467,7 +577,10 @@ Email/
 │       │   ├── test_export_service.py     # 日报文件和任务状态集成测试
 │       │   ├── test_health.py             # 健康检查与统一错误结构
 │       │   ├── test_manual_reparse.py     # 人工重解析全链路测试
-│       │   └── test_migrations.py         # Alembic 升级、检查和降级测试
+│       │   ├── test_migrations.py         # Alembic 升级、检查和降级测试
+│       │   ├── test_tenant_isolation_api.py # 两个租户的 API 数据隔离
+│       │   ├── test_multi_mailbox_api.py # 多邮箱创建、密文、授权和越权拦截
+│       │   └── test_tenant_management_api.py # 租户创建、登录选择、切换和成员权限
 │       └── unit/
 │           ├── __init__.py                # 单元测试包标记
 │           ├── test_archive_service.py    # 归档目录、附件和大小限制
@@ -480,10 +593,12 @@ Email/
 │           ├── test_excel_parser_service.py     # 三类 Excel 解析与异常
 │           ├── test_field_registry.py     # 托管字段别名扩展
 │           ├── test_imap_client.py        # IMAP 返回值和错误映射
+│           ├── test_init_security_keys.py # 安全密钥初始化不覆盖测试
 │           ├── test_mime_parser.py        # MIME 附件提取
 │           ├── test_normalizers.py        # 日期、数值、空值和代码标准化
 │           ├── test_persistence_service.py     # 事务、幂等、哈希和状态
 │           ├── test_security.py            # 密码及会话签名
+│           ├── test_tenant_security.py     # 默认拒绝、跨租户隔离、凭据和审计链
 │           ├── test_uid_registry.py        # UID 原子预留和过期恢复
 │           └── test_workbook_reader.py     # XLS/XLSX 文件签名识别
 └── frontend/
@@ -498,8 +613,8 @@ Email/
         ├── main.ts                        # 创建 Vue、Pinia、Router、Element Plus
         ├── App.vue                        # 顶层 router-view
         ├── styles/index.css               # 全局主题、布局和响应式样式
-        ├── views/LoginView.vue            # 登录页面
-        ├── layouts/AppShell.vue           # 侧边栏、顶部栏、用户菜单和页面容器
+        ├── views/LoginView.vue            # 账号验证及多租户登录选择
+        ├── layouts/AppShell.vue           # 侧边栏、顶部租户切换、用户菜单和页面容器
         ├── router/index.ts                # 动态业务路由、登录和角色守卫
         ├── router/meta.d.ts               # Vue Router 自定义 meta 类型声明
         ├── components/
@@ -508,11 +623,15 @@ Email/
         ├── platform/
         │   ├── api/http.ts                # Axios 实例、Cookie、401 拦截和错误消息
         │   ├── api/types.ts               # 用户、分页和错误通用类型
-        │   ├── auth/auth.store.ts         # 登录、恢复会话、退出和本地用户状态
+        │   ├── auth/auth.store.ts         # 登录、租户清单/切换、恢复会话和退出
         │   └── modules/types.ts            # 可扩展业务模块契约
         └── modules/
             ├── index.ts                   # 模块注册、重复校验和路由汇总
             ├── index.spec.ts              # 模块注册机制测试
+            ├── tenant-admin/
+            │   ├── index.ts               # 系统管理模块导航和路由
+            │   ├── api/                    # 租户及成员管理请求与类型
+            │   └── views/TenantManagementView.vue # 租户、成员和角色管理页面
             └── fund-operations/
                 ├── index.ts               # 基金运营模块导航与懒加载路由
                 ├── api/index.ts           # 本模块全部后端请求函数
@@ -522,8 +641,10 @@ Email/
                 │   └── NavHistoryChart.vue    # ECharts 历史净值曲线
                 └── views/
                     ├── OverviewView.vue    # 运营概览
-                    ├── EmailListView.vue   # 邮箱状态、连接检测、同步和邮件列表
+                    ├── EmailListView.vue   # 按来源邮箱查询、检测、同步和邮件列表
+                    ├── MailboxAccountsView.vue # 多邮箱配置、状态和用户授权
                     ├── FundNavView.vue     # 净值查询、导出和历史曲线
+                    ├── FundProductsView.vue # 产品要素统计、份额详情和说明编辑
                     ├── ExceptionListView.vue # 异常筛选、原邮件和处理状态
                     └── OperationsView.vue  # 人工上传重新解析
 ```
@@ -540,9 +661,10 @@ Email/
 | `ArchivedEmail` | `EmailArchiveService.archive()` | EML 路径、清单路径、已归档附件 | `DatabaseArchiveRecorder` |
 | `AttachmentRecord` | `MailArchivePersistenceService.persist()` | 文件相对路径、SHA-256、格式和解析状态 | `AttachmentProcessingService` |
 | `TableDetection` | `TableDetector.detect()` | 表头位置、字段列映射、类型、分数和缺失字段 | 对应表格解析器 |
-| `StandardNavRecord` | `BaseTableParser._parse_row()` | 统一净值字段及来源 Sheet/行号 | `NavPersistenceService` |
+| `StandardNavRecord` | `BaseTableParser._parse_row()` | 统一净值、21 项托管要素、经理/策略来源值及 Sheet/行号 | `NavPersistenceService` |
 | `ParseIssue` | 读取、检测或行转换阶段 | 异常代码、字段、原值、Sheet、行号 | `ExceptionRecord` |
-| `FundNav` | `NavPersistenceService.persist()` | 最终可查询的标准净值 | API、历史曲线、日报导出 |
+| `FundNav` | `NavPersistenceService.persist()` | 份额级每日净值和不可覆盖的表格要素快照 | API、历史曲线、日报导出、产品详情 |
+| `FundProduct` | `NavPersistenceService._upsert_product()` | 按备案代码归并的产品主档、来源说明和人工覆盖值 | 产品要素 API 与页面 |
 
 ## 邮件读取与附件提取详解（重点）
 
@@ -555,11 +677,13 @@ Email/
 
 两个入口最终都调用 `MailSyncRunner.run(trigger_type=MANUAL)`。Runner 的职责是：
 
-1. 获取进程内互斥锁，阻止同一后端进程并发执行两次同步。
-2. 新建 `job_run`，状态设为 `running`。
-3. 组装 `EmailSyncService`、`DatabaseArchiveRecorder`、`AttachmentProcessingService` 和 `ExcelParserService`。
-4. 执行同步并根据成功、部分成功或失败回写 `job_run`。
-5. 无论成功或异常都释放互斥锁。
+1. 根据登录租户和邮箱授权读取默认 `MailboxAccount`，解密当前邮箱凭据。
+2. 获取“租户 + 邮箱”进程内互斥锁，只阻止同一邮箱并发同步。
+3. 新建带租户、邮箱和触发用户的 `job_run`，状态设为 `running`。
+4. 组装带相同作用域的 `EmailSyncService`、`DatabaseArchiveRecorder`、
+   `AttachmentProcessingService` 和 `ExcelParserService`。
+5. 执行同步并根据成功、部分成功或失败回写 `job_run` 和审计事件。
+6. 无论成功或异常都释放互斥锁。
 
 ### 2. IMAP 搜索与原始邮件获取
 
@@ -664,7 +788,8 @@ for part_index, part in enumerate(message.walk(), start=1):
 `EmailArchiveService.archive()` 在任何 Excel 解析之前执行：
 
 1. 检查每个附件不超过 `max_attachment_bytes`。
-2. 使用邮件接收时间转换到 `archive_timezone`，确定 `YYYY/MM/DD`。
+2. 使用请求中的 `tenant_id`、`mailbox_account_id` 和邮件接收时间，确定
+   `tenants/{tenant}/mailboxes/{mailbox}/YYYY/MM/DD`。
 3. 清除附件名中的路径、Windows 非法字符和保留名称。
 4. 原子写入原始 `.eml`。
 5. 原子写入每个附件，并计算 SHA-256。
@@ -707,6 +832,12 @@ multipart/mixed
 
 `application/octet-stream` 只是通用二进制类型，不能据此否定附件。系统以 MIME 文件名/`Content-Disposition` 提取原始附件，再以文件扩展名和真实文件签名决定是否解析。普通 HTML 正文、Logo 和签名图片不会混入 Excel 附件集合。
 
+2026-08-05 又以 `BODY.PEEK[]` 只读审查当前 163 邮箱最近 7 天：25 封邮件中有 12 封
+中信净值邮件、12 个 XLSX 附件。全部附件都有相同的 21 列表头，并在主表下方提供
+“投资经理信息”“投资策略信息”，随后才进入“声明”页脚。12 个附件离线回放得到
+12 条份额快照、7 个备案主体，未产生伪数据行或解析错误；审查过程不设置已读、不调用
+业务同步，也不写正式台账。
+
 当前数据取值优先级为：
 
 1. **原始 Excel 附件是唯一自动入库的权威来源**，保留文件哈希、Sheet 和原始行号，便于审计。
@@ -719,7 +850,7 @@ multipart/mixed
 | 原始表头 | 标准字段 | 示例值 |
 | --- | --- | --- |
 | 日期 | `nav_date` | `2026-07-31` |
-| 资产代码 | `product_code` | `SBPA11` |
+| 资产代码 | `asset_code`，同时作为该份额的 `product_code` | `SBPA11` |
 | 资产名称 | `product_name` | 吉余漫衍私募证券投资基金 |
 | 资产份额净值(元) | `unit_nav` | `0.7071` |
 | 资产份额累计净值(元) | `total_nav` | `0.7071` |
@@ -753,15 +884,25 @@ multipart/mixed
 
 `FieldAliasRegistry` 从 `config/excel_fields.yaml` 加载别名。标准字段含义如下：
 
-| 标准字段 | 最终字段 | 典型托管表头别名 | 是否进入 `fund_nav` |
+| 标准字段 | 业务含义 | 典型托管表头别名 | 保存位置 |
 | --- | --- | --- | --- |
-| `product_name` | 产品名称 | 产品名称、产品全称、基金名称、基金全称、资产名称 | 是 |
-| `product_code` | 产品代码 | 产品代码、产品编号、基金代码、基金编号、资产代码 | 是 |
-| `nav_date` | 日期 | 估值基准日、估值日期、净值日期、业务日期、数据日期、日期 | 是 |
-| `unit_nav` | 单位净值 | 单位净值、单位基金净值、基金单位净值、份额净值、资产份额净值 | 是 |
-| `total_nav` | 累计净值 | 累计净值、累计单位净值、基金累计净值、资产份额累计净值 | 是 |
-| `asset_value` | 资产净值 | 资产净值、基金资产净值、产品资产净值、净资产 | 是 |
-| `asset_share` | 资产份额 | 资产份额、基金份额、产品份额、总份额、实收基金 | **仅用于识别资产浏览表，当前未写入 `fund_nav`** |
+| `product_name` | 产品名称 | 产品名称、产品全称、基金名称、基金全称、资产名称 | `fund_nav` |
+| `product_code` | 明确的产品/基金代码 | 产品代码、产品编号、基金代码、基金编号 | `fund_nav.product_code`，优先级最高 |
+| `asset_code` | 托管资产或份额代码 | 资产代码、证券代码 | `fund_nav.asset_code`；无明确产品代码时同时作为份额 `product_code` |
+| `registration_code` | 基金业协会备案代码 | 协会备案代码、备案代码/编码 | `fund_nav.registration_code` 及产品主档归并键 |
+| `nav_date` | 估值日期 | 估值基准日、估值日期、净值日期、业务日期、数据日期、日期 | `fund_nav` |
+| `unit_nav` / `total_nav` | 单位及累计净值 | 单位净值、份额净值、资产份额净值、累计单位净值 | `fund_nav` |
+| `asset_value` / `asset_share` | 资产净值及资产份额 | 资产净值、净资产、资产份额、基金份额 | `fund_nav` |
+| `paid_in_capital` | 实收资本 | 实收资本(元) | `fund_nav` |
+| `holding_shares` / `reference_market_value` | 投资者持有份额和参考市值 | 持有份额、参考市值(元) | `fund_nav` |
+| `total_assets` / `total_assets_nav_ratio` | 总资产和杠杆比例 | 总资产(元)、总资产/资产净值 | `fund_nav`；百分比归一成比例小数 |
+| `investor_name` / `investor_account` | 投资者及基金账号 | 投资者名称、投资者基金账号 | `fund_nav` |
+| `parent_unit_nav` / `parent_total_nav` | 母基金单位及累计净值 | 母基金单位净值、母基金累计单位净值 | `fund_nav` |
+| `parent_asset_value` / `parent_paid_in_capital` | 母基金资产净值及实收资本 | 母基金资产净值、母基金实收资本(元) | `fund_nav` |
+| `parent_product_code` / `parent_product_name` | 母基金代码及名称 | 母基金产品代码、母基金产品名称 | `fund_nav`，辅助份额归并 |
+| `notes` | 表格备注 | 备注 | `fund_nav` |
+| `investment_manager_info` | 投资经理说明区 | “投资经理信息：……” | `fund_product` 来源值，可人工覆盖 |
+| `investment_strategy_info` | 投资策略说明区 | “投资策略信息：……” | `fund_product` 来源值，可人工覆盖 |
 
 表头匹配前会执行：
 
@@ -772,6 +913,12 @@ multipart/mixed
 5. 先进行精确别名匹配，再进行受限的“表头以别名结尾”匹配。
 
 新增托管平台时，应优先在 `excel_fields.yaml` 增加经过真实样本确认的精确别名，不要在代码里写死托管机构名称。
+
+三个代码概念不得混用：份额净值唯一键的代码优先取明确“产品代码”，其次取原样
+“资产代码”（包括 `(总)/(A级)/(B级)` 后缀），最后才回退到备案代码；产品主档则优先
+使用协会备案代码归并 A/B/C/总份额。`TA代码` 属于登记过户系统辅助代码，不映射为
+任何产品身份字段。以商指陆号附件为例，缺少产品/资产代码时使用备案编码 `SARD55`，
+不会使用 TA 代码 `SA2889`。
 
 ### 4. 多行表头扫描
 
@@ -796,9 +943,9 @@ multipart/mixed
 
 | 类型 | 必需标准字段 | 可选字段 | 主要签名 |
 | --- | --- | --- | --- |
-| `single_fund_daily` | 产品代码、产品名称、单位净值 | 日期、累计净值、资产净值 | 资产代码、资产名称、资产份额净值 |
-| `fund_nav_summary` | 产品代码、产品名称、日期、单位净值 | 累计净值、资产净值 | 估值基准日 |
-| `asset_nav_browser` | 产品代码、产品名称、日期、资产净值、资产份额 | 单位净值、累计净值 | 资产净值、资产份额 |
+| `single_fund_daily` | 产品名称、单位净值，以及产品/资产/备案代码任一 | 日期、累计净值、全部产品要素 | 资产代码、资产名称、资产份额净值 |
+| `fund_nav_summary` | 产品名称、日期、单位净值，以及产品/资产/备案代码任一 | 累计净值、资产净值、产品要素 | 估值基准日 |
+| `asset_nav_browser` | 产品名称、日期、资产净值、资产份额，以及产品/资产/备案代码任一 | 单位净值、累计净值、产品要素 | 资产净值、资产份额 |
 
 评分规则优先选择“必需字段全部齐全”的候选，其次比较字段命中数量和签名。如果两个完整类型分数差小于 `ambiguity_score_delta`，系统拒绝猜测并记录 `ambiguous_format`。
 
@@ -817,6 +964,8 @@ multipart/mixed
 `BaseTableParser._extract_metadata()` 会扫描正式表头之前的单元格，只提取：
 
 - `product_code`
+- `asset_code`
+- `registration_code`
 - `product_name`
 - `nav_date`
 
@@ -834,7 +983,7 @@ raw_data = {
 }
 
 # 行内值优先；产品代码、名称、日期可以回退到表头上方元数据
-product_code = normalize_identifier(raw_or_metadata_product_code)
+product_code = normalize_identifier(explicit_product_code or asset_code or registration_code)
 product_name = normalize_text(raw_or_metadata_product_name)
 nav_date = parse_date(raw_or_metadata_nav_date)
 
@@ -842,6 +991,9 @@ nav_date = parse_date(raw_or_metadata_nav_date)
 unit_nav = parse_decimal(raw_data.get("unit_nav"))
 total_nav = parse_decimal(raw_data.get("total_nav"))
 asset_value = parse_decimal(raw_data.get("asset_value"))
+paid_in_capital = parse_decimal(raw_data.get("paid_in_capital"))
+total_assets = parse_decimal(raw_data.get("total_assets"))
+total_assets_nav_ratio = parse_ratio(raw_data.get("total_assets_nav_ratio"))
 
 # 生成统一记录，同时保留文件、Sheet、原始行号和识别类型
 record = StandardNavRecord(...)
@@ -853,11 +1005,16 @@ record = StandardNavRecord(...)
 - 跳过表格中间重复出现的表头。
 - 跳过“合计、总计、说明、备注、制表人、复核人”等汇总/签字行，并允许后续继续识别数据。
 - 任一已映射单元格以 `footer_markers` 中的“声明、免责声明、风险提示”等标记开头时，立即结束当前数据区。中信附件的数据行后会直接拼接长篇声明，这条规则可防止声明被误判为基金记录。
+- 在终止页脚前扫描“投资经理信息：”“投资策略信息：”说明行，提取冒号后的文本并附加到
+  本 Sheet 的标准记录；这两行自身不会生成净值记录。
 - 保存 Excel 的 1 基行号，异常页面可以定位原表行。
 
 页脚标记可在 `config/config.yaml` 的 `excel.footer_markers` 中维护。匹配要求标记后是冒号、空格、换行或文本结束，例如“声明：……”会命中，而普通产品名称中的相同汉字不会做任意子串匹配。
 
-真实附件回放结果：14 个工作簿共识别 25 条净值记录，未产生无效行或解析异常。修改前，中信附件末尾的 3 个声明行会被错误记录为 `invalid_date / missing_product_code / missing_product_name / empty_nav`；新的数据边界规则已消除这些伪异常。
+真实附件回放包括前期华泰/招商样本，以及 2026-08-05 当前邮箱中的 12 个中信工作簿。
+本次中信样本全部一文件一记录，归并为 7 个产品主体，未产生无效行或解析异常。修改前，
+中信附件末尾说明/声明可能被错误记录为 `invalid_date / missing_product_code /
+missing_product_name / empty_nav`；新的说明区和数据边界规则已消除这些伪异常。
 
 ### 8. 日期与数值转换
 
@@ -866,7 +1023,8 @@ record = StandardNavRecord(...)
 - 日期支持 Python/pandas 日期对象、Excel 日期序号、`YYYYMMDD`、`YYYY-MM-DD`、`YYYY/MM/DD` 和中文年月日。
 - 产品代码会去除 Excel 将纯数字代码读成的 `.0`，持久化前再去空格并转大写。
 - 数值使用 `Decimal`，支持千分位、货币符号、括号负数和“元”后缀。
-- 拒绝布尔值、无穷值、百分比和以 `=` 开头的公式文本。
+- 普通金额/净值拒绝布尔值、无穷值、百分比和以 `=` 开头的公式文本；
+  `总资产/资产净值` 使用独立 `parse_ratio()`，例如 `100.10%` 保存为 `1.001`。
 - 空字符串、横杠、`N/A` 等统一为 `None`。
 
 ### 9. 标准记录及异常输出
@@ -877,10 +1035,18 @@ record = StandardNavRecord(...)
 StandardNavRecord
 ├─ product_name
 ├─ product_code
+├─ asset_code / registration_code / share_class
 ├─ nav_date
 ├─ unit_nav
 ├─ total_nav
 ├─ asset_value
+├─ asset_share / paid_in_capital / holding_shares / reference_market_value
+├─ total_assets / total_assets_nav_ratio
+├─ investor_name / investor_account
+├─ parent_unit_nav / parent_total_nav / parent_asset_value
+├─ parent_product_code / parent_product_name / parent_paid_in_capital
+├─ notes
+├─ investment_manager_info / investment_strategy_info
 ├─ source_file
 ├─ source_sheet
 ├─ source_row
@@ -909,6 +1075,37 @@ StandardNavRecord
 | `duplicate_row` | 同一工作簿内产品代码和日期重复 |
 | `mixed_workbook_types` | 一个工作簿的多个 Sheet 属于不同类型 |
 
+## 产品要素归纳、份额归并与编辑边界
+
+每一条 `FundNav` 是“某份额 + 某估值日”的不可覆盖快照。`NavPersistenceService` 在同一
+事务内调用 `master_product_identity()` 计算产品主体，并更新 `FundProduct`：
+
+```text
+份额级 product_code
+  明确产品代码 > 原样资产代码 > 备案代码
+  示例：SAVH33(总)、SAVH33(A级)、T08604(B级)
+        ↓ 每个代码分别保留每日净值，防止份额互相覆盖
+产品主体 master_product_code
+  协会备案代码 > 母基金产品代码 > 去除份额后缀的代码
+  示例：上述三个份额全部归入 SAVH33 / 吉余牡丹私募证券投资基金
+```
+
+核心规则：
+
+1. 表格中的净值、资产净值、实收资本、总资产、母基金字段等只允许由原附件导入，API
+   不提供人工修改入口；历史日快照绝不被后续邮件覆盖。
+2. 产品列表汇总资产规模时，若同日存在“总份额”就只取总份额，避免再叠加 A/B/C 类；
+   没有总份额时才汇总各份额非空金额。多份额产品不伪造一个统一单位净值。
+3. 附件带经理/策略说明时写入 `source_*`；其他托管平台缺失该说明时不会清空已保存来源值。
+4. 人工编辑写入 `manual_*` 并置人工标记，页面优先显示人工值；“恢复附件来源”只关闭
+   人工标记，不删除来源值。每次编辑或恢复都追加 `fund_product.profile.update` 审计事件，
+   审计明细只记录变更字段，不复制经理简历等正文。
+5. `FundProduct` 是租户级主档，但 API 还要求当前用户至少能看到该产品的一条授权邮箱
+   净值，防止通过主档接口绕过邮箱资源授权。
+
+“产品要素”页面提供主体数量、最新份额数、去重后的资产净值和缺失说明统计；详情按
+总/A/B/C 份额展示最新 21 项字段，并明确显示有值字段数、来源附件和说明值来源。
+
 ## 净值持久化、幂等与状态传递
 
 ### 附件级事务
@@ -917,8 +1114,8 @@ StandardNavRecord
 
 净值写入前执行：
 
-1. 产品代码去空格并转大写。
-2. 用 `(product_code, nav_date)` 查询已有记录。
+1. 份额产品代码去空格并转大写，同时计算 `master_product_code` 并同步产品主档。
+2. 用 `(tenant_id, product_code, nav_date)` 查询已有记录。
 3. 不存在则在数据库保存点内插入。
 4. 并发触发唯一约束时只回滚保存点，再查询已存在记录。
 5. 重复数据不覆盖历史净值，写入 `duplicate_nav` 异常。
@@ -978,6 +1175,16 @@ flowchart LR
 
 ```mermaid
 erDiagram
+    TENANT ||--o{ TENANT_MEMBERSHIP : "拥有成员"
+    APP_USER ||--o{ TENANT_MEMBERSHIP : "加入账套"
+    TENANT ||--o{ MAILBOX_ACCOUNT : "拥有邮箱"
+    MAILBOX_ACCOUNT ||--o{ MAILBOX_USER_GRANT : "邮箱授权"
+    APP_USER ||--o{ MAILBOX_USER_GRANT : "获得权限"
+    TENANT ||--o{ AUDIT_EVENT : "保留审计"
+    TENANT ||--o{ FUND_PRODUCT : "拥有产品主档"
+    TENANT ||--o{ FUND_NAV : "隔离净值"
+    FUND_PRODUCT ||--o{ FUND_NAV : "按备案主体归并"
+    MAILBOX_ACCOUNT ||--o{ EMAIL_RECORD : "接收邮件"
     JOB_RUN ||--o{ EMAIL_RECORD : "记录任务邮件"
     EMAIL_RECORD ||--o{ ATTACHMENT_RECORD : "包含"
     EMAIL_RECORD ||--o{ EXCEPTION_RECORD : "关联异常"
@@ -991,57 +1198,170 @@ erDiagram
         string role
         int token_version
     }
+    TENANT {
+        int id PK
+        string code UK
+        string name
+    }
+    MAILBOX_ACCOUNT {
+        int id PK
+        int tenant_id FK
+        string host
+        string username
+        string credential_ciphertext
+    }
     FUND_NAV {
         int id PK
-        string product_code UK
-        date nav_date UK
+        int tenant_id FK
+        int mailbox_account_id FK
+        string product_code
+        string master_product_code
+        string registration_code
+        date nav_date
         decimal unit_nav
         decimal total_nav
         decimal asset_value
         int attachment_id FK
+    }
+    FUND_PRODUCT {
+        int id PK
+        int tenant_id FK
+        string product_code
+        string product_name
+        text source_manager_strategy
+        text manual_manager_strategy
     }
 ```
 
 | 表 | 业务职责 | 关键约束 |
 | --- | --- | --- |
 | `app_user` | 后台账号和角色 | `username` 唯一；密码只存散列 |
-| `job_run` | 邮箱同步、人工上传和导出任务审计 | 保存触发类型、开始结束时间和统计 |
-| `email_record` | 邮件元数据、原始 EML 路径和汇总状态 | `mailbox_key + uid_validity + message_uid` 唯一 |
+| `tenant` | 机构/业务账套，是最外层数据边界 | `code` 唯一；可独立停用 |
+| `tenant_membership` | 用户在某租户内的角色 | `tenant_id + user_id` 唯一 |
+| `mailbox_account` | 每个可独立连接的邮箱及凭据密文 | 同租户内 `host + username + folder` 唯一 |
+| `mailbox_user_grant` | 用户对指定邮箱的元数据、正文、操作和凭据权限 | `mailbox_account_id + user_id` 唯一 |
+| `job_run` | 邮箱同步、人工上传和导出任务记录 | 带 `tenant_id`、邮箱和触发用户 |
+| `email_record` | 邮件元数据、原始 EML 路径和汇总状态 | `tenant_id + mailbox_account_id + uid_validity + message_uid` 唯一 |
 | `attachment_record` | 原附件路径、SHA-256、类型和解析状态 | 一封邮件内归档路径唯一 |
-| `fund_nav` | 最终标准基金净值和来源定位 | `product_code + nav_date` 唯一 |
+| `fund_nav` | 份额级每日净值、21 项托管要素和来源定位 | 租户内 `product_code + nav_date` 唯一，不同租户互不影响 |
+| `fund_product` | 按备案代码归并的产品主档和经理/策略来源值、人工覆盖值 | `tenant_id + product_code` 唯一 |
 | `exception_record` | 解析、字段、重复和文件异常 | 关联邮件/附件，状态可解决或忽略 |
+| `audit_event` | 登录、邮箱连接、正文查看、导出、处置等合规留痕 | 只追加、敏感字段脱敏、HMAC 前后哈希链 |
 
 所有数据库时间按 UTC 存储；页面筛选和日报目录日期按 `storage.archive_timezone` 转换。
+
+### 租户与邮箱安全底座
+
+当前版本已经开放“租户与成员”管理页、顶部租户切换、`/api/v1/tenants` 和
+`/api/v1/auth/switch-tenant` 接口。平台管理员可创建或停用租户；租户管理员只能维护自己
+有管理权限的租户成员。现有单邮箱配置首次进入
+默认租户/默认邮箱；管理员随后可在数据库中维护任意多个邮箱，而不会再被 YAML 旧配置
+覆盖。每个邮箱拥有独立凭据密文、连接/同步状态、UID 状态和归档目录。
+
+```mermaid
+sequenceDiagram
+    participant B as 浏览器/CLI
+    participant A as FastAPI 认证依赖
+    participant S as 租户作用域 Session
+    participant D as SQLite
+    B->>A: HttpOnly Cookie / 系统任务身份
+    A->>D: 校验用户、TenantMembership、MailboxUserGrant
+    A->>S: 注入 tenant_id 与允许的 mailbox_ids
+    S->>D: ORM 查询自动追加租户和邮箱条件
+    S->>D: 写入时校验对象作用域
+    D-->>B: 仅返回当前账套和已授权邮箱的数据
+```
+
+关键实现规则：
+
+1. `Tenant` 是最外层机构/账套边界；角色来自 `TenantMembership.role`，不再使用用户表
+   上的全局角色决定业务权限。
+2. `MailboxUserGrant` 分开控制邮件元数据、正文/EML、同步操作和凭据管理。即使同属一个
+   租户，未获邮箱授权的用户也不能读取该邮箱生成的邮件、附件、净值和异常。
+3. 登录令牌写入 `tenant_id`。`api/deps.py` 每次请求重新校验成员关系和邮箱授权，然后
+   创建专用租户 Session；不能只依赖前端传参或页面隐藏。
+4. `db/session.py` 对 `TenantOwnedMixin` 和 `MailboxOwnedMixin` 自动注入过滤条件。没有
+   显式作用域的业务查询/写入采用默认拒绝；邮箱账户、租户成员和邮箱授权表也在默认
+   拒绝范围内。只有登录鉴权与初始化服务使用代码中明确标记的短暂旁路。
+5. 净值唯一键是“租户 + 产品代码 + 日期”。同一租户从不同邮箱收到同一产品同日数据
+   时仍识别为重复，不会因邮箱隔离绕过幂等；不同租户可保存相同产品代码和日期。
+6. 邮件、附件、人工上传和日报统一写入
+   `data/tenants/{tenant_id}/mailboxes/{mailbox_account_id}/...`，避免文件层串目录。
+7. `AppUser.is_platform_admin` 只控制平台级租户生命周期；实际进入租户仍要求有效的
+   `TenantMembership`。修改成员角色或停用成员会增加用户 `token_version`，使已有会话失效。
+8. 每个租户至少保留一名有效租户管理员；后端拒绝停用或降级最后一名管理员。
+
+### 邮箱凭据加密
+
+- `mailbox_account` 只保存 `credential_ciphertext`，不保存可回显的授权码或 OAuth2 令牌。
+- `MailboxCredentialCipher` 使用 AES-256-GCM，每次加密使用随机 96 位 nonce，并把
+  `tenant_id + mailbox_account_id + 密文版本` 作为附加认证数据。把密文复制到另一个
+  租户或邮箱后会解密失败。
+- 只有 `MailboxAccountService.runtime_settings()` 在执行连接检测或同步前短暂解密，并
+  直接组装内存中的 `EmailSettings`；接口响应、日志和审计明细都不返回明文。
+- 密钥来自 `FUND_NAV_SECURITY__CREDENTIAL_ENCRYPTION_KEY`。生产环境必须通过环境变量
+  或部署平台密钥管理注入，不能写入 YAML、数据库、日志或源码。
+- 本版本只定义 `credential_key_version=1`。后续轮换密钥时应采用“新增版本 → 逐邮箱
+  解密重加密 → 验证 → 切换默认版本”的流程，不可直接替换旧密钥。
+
+### 合规审计日志
+
+`AuditService` 记录登录成功/失败/退出、邮箱连接检测、同步、邮件正文查看、原始 EML
+下载、异常处置、人工重解析和日报导出。`detail` 中键名含 `password`、`credential`、
+`token`、`secret`、`authorization` 或 `cookie` 的值会统一替换为 `[REDACTED]`。
+
+每个租户的事件使用独立前后哈希链：当前事件保存 `previous_hash`，并用独立审计密钥对
+规范化事件内容计算 HMAC-SHA256 `event_hash`。ORM 监听器禁止修改/删除审计事件；SQLite
+迁移还创建数据库触发器，阻止绕开 ORM 的 `UPDATE` 和 `DELETE`。管理员可调用
+`GET /api/v1/audit-events` 查询本租户记录；`AuditService.verify_tenant_chain()` 可检查链
+完整性并返回首个异常事件 ID。
 
 ## API 与前端页面传递关系
 
 | 前端区域 | 前端请求函数 | 后端接口 | 后端处理 |
 | --- | --- | --- | --- |
-| 登录页 | `auth.store.login()` | `POST /auth/login` | 验证密码，设置 HttpOnly Cookie |
+| 登录页 | `auth.store.login()` | `POST /auth/login` | 验证密码；多租户账号返回可选租户，选定后设置 Cookie |
+| 登录租户清单 | `auth.store.loadTenants()` | `GET /auth/tenants` | 只返回当前用户有效成员关系对应的启用租户 |
+| 顶部租户切换 | `auth.store.switchTenant()` | `POST /auth/switch-tenant` | 重新校验成员关系、签发目标租户 Cookie 并记录双向审计 |
 | 路由启动 | `auth.store.restore()` | `GET /auth/me` | 校验签名令牌和用户状态 |
+| 租户管理 | `getTenants()` / `createTenant()` | `GET/POST /tenants` | 租户管理员查看本租户；平台管理员查看并创建租户 |
+| 成员管理 | `getTenantMembers()` / `updateTenantMember()` | `GET/POST/PUT /tenants/{id}/members` | 建立成员关系、设置租户角色和状态、保护最后管理员 |
 | 运营概览 | `getDashboard()` | `GET /dashboard` | 聚合今日邮件、成功数、基金数和异常 |
-| 邮件列表 | `getEmails()` | `GET /emails` | 主题/发件人、状态和日期分页筛选 |
+| 邮箱账户 | `getMailboxes()` | `GET /mailboxes` | 只返回当前租户及当前用户授权邮箱，不返回凭据 |
+| 新增/编辑邮箱 | `createMailbox()` / `updateMailbox()` | `POST/PATCH /mailboxes` | 安全门禁、租户范围、加密凭据和审计 |
+| 邮箱用户授权 | `updateMailboxGrant()` | `PUT /mailboxes/{id}/grants/{user_id}` | 四级权限、最后管理员保护和审计 |
+| 邮件列表 | `getEmails()` | `GET /emails` | 来源邮箱、主题/发件人、状态和日期分页筛选 |
 | 邮箱信息 | `getEmailConnectionInfo()` | `GET /emails/connection` | 返回脱敏配置，不返回密码或令牌 |
 | 检测连接 | `testEmailConnection()` | `POST /emails/connection/test` | 登录 IMAP、只读选择目录并返回耗时 |
 | 立即同步 | `syncEmailNow()` | `POST /emails/sync` | 执行完整邮件到净值链路 |
 | 邮件详情 | `getEmailDetail()` | `GET /emails/{id}` | 返回纯文本正文和附件状态 |
 | EML 下载 | `downloadRawEmail()` | `GET /emails/{id}/raw` | 安全返回原始邮件归档 |
-| 净值列表 | `getFundNav()` | `GET /fund-nav` | 产品和日期分页查询 |
+| 净值列表 | `getFundNav()` | `GET /fund-nav` | 来源邮箱、产品和日期分页查询 |
 | 产品联想 | `searchProducts()` | `GET /fund-nav/products` | 返回最多 30 个产品 |
 | 历史曲线 | `getFundHistory()` | `GET /fund-nav/history` | 返回最多 5,000 个净值点 |
 | 日报下载 | `downloadDailyExport()` | `GET /fund-nav/export` | 即时构建并返回指定日期 Excel |
-| 异常列表 | `getExceptions()` | `GET /exceptions` | 分类、级别、状态和日期筛选 |
+| 产品要素统计 | `getFundProductSummary()` | `GET /fund-products/summary` | 按授权邮箱聚合主体、份额、规模和缺失说明 |
+| 产品要素列表/详情 | `getFundProducts()` / `getFundProduct()` | `GET /fund-products` / `GET /fund-products/{id}` | 展示主体及最新份额的 21 项只读表格快照 |
+| 经理/策略维护 | `updateFundProductProfile()` | `PATCH /fund-products/{id}/profile` | 运营/管理员人工覆盖或恢复来源值并写审计链 |
+| 异常列表 | `getExceptions()` | `GET /exceptions` | 来源邮箱、分类、级别、状态和日期筛选 |
 | 异常处置 | `updateExceptionStatus()` | `PATCH /exceptions/{id}/status` | 解决、忽略或重新打开 |
 | 人工处理 | `uploadForReparse()` | `POST /operations/manual-reparse` | 上传归档后复用统一解析链 |
+| 审计日志（API） | 尚未开放前端菜单 | `GET /audit-events` | 管理员查询本租户追加式审计记录 |
 
 ### 登录和角色传递
 
-- FastAPI 登录成功后写入签名 HttpOnly Cookie，前端 JavaScript 不读取令牌内容。
+- FastAPI 先验证全局登录身份，再读取全部有效 `TenantMembership`。只有一个租户时直接
+  进入；多个租户时第一次响应不创建会话，用户必须明确选择租户后再次提交。
+- 登录成功后把用户 ID、令牌版本和所选 `tenant_id` 写入签名 HttpOnly Cookie，
+  前端 JavaScript 不读取令牌内容。
 - Axios 设置 `withCredentials: true`，浏览器自动随请求携带 Cookie。
 - 任何接口返回 401 时，响应拦截器清除 Pinia 会话并跳转登录页。
-- `viewer` 可以查询、查看邮件和下载报表。
-- `operator` 可以检测/同步邮箱、处置异常和人工重解析。
-- `admin` 当前具备最高权限，并可通过 CLI 创建或更新账号。
+- `viewer`、`operator`、`admin` 均是租户成员角色；同一用户在不同租户可拥有不同角色。
+- 邮箱正文查看、同步和凭据管理还必须同时通过 `MailboxUserGrant` 资源授权。
+- 顶部切换只展示当前用户有有效成员关系的启用租户；后端拒绝伪造租户 ID。切换成功后
+  前端跳转概览并整页刷新，清除上一租户页面内存状态。
+- 平台管理员和租户管理员是两类权限：前者创建/停用租户，后者管理当前租户成员；同一
+  用户可以在吉余是管理员、在千果是只读用户。
 - 前端路由守卫只改善交互；真实权限由后端 `require_roles()` 再次校验。
 
 ## 日报导出数据流
@@ -1078,6 +1398,8 @@ Pydantic 默认值
 ```dotenv
 FUND_NAV_EMAIL__PASSWORD=邮箱授权码
 FUND_NAV_SECURITY__SECRET_KEY=至少32位随机字符串
+FUND_NAV_SECURITY__CREDENTIAL_ENCRYPTION_KEY=URL-safe Base64 的32字节随机密钥
+FUND_NAV_SECURITY__AUDIT_SIGNING_KEY=另一份 URL-safe Base64 的32字节随机密钥
 ```
 
 主要配置区域：
@@ -1091,7 +1413,7 @@ FUND_NAV_SECURITY__SECRET_KEY=至少32位随机字符串
 | `scheduler` | 当前没有运行器消费 | 为后续 APScheduler 接入预留 |
 | `excel` | `parsers/` | 字段字典、表头扫描和空行终止参数 |
 | `storage` | 归档、详情、导出 | 数据根目录、业务时区和日报文件名 |
-| `security` | 登录和 Cookie | 会话密钥、Cookie 名称、有效期和 Secure 标记 |
+| `security` | 登录、邮箱凭据和审计 | 会话密钥、AES-GCM 密钥、HMAC 密钥、Cookie 参数 |
 
 ## 前端可扩展模块机制
 

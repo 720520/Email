@@ -73,3 +73,9 @@ excel:
 storage:
   data_directory: data
   archive_timezone: Asia/Shanghai
+
+security:
+  # 生产环境通过 .env 注入三个相互独立的随机密钥，禁止写入 YAML。
+  secret_key: ""
+  credential_encryption_key: ""
+  audit_signing_key: ""

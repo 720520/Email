@@ -31,6 +31,15 @@ def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[FastAPI, N
         "FUND_NAV_SECURITY__SECRET_KEY",
         "test-only-session-secret-with-at-least-32-characters",
     )
+    # 测试专用固定密钥，不承载任何真实凭据；确保多邮箱写入走独立密钥分支。
+    monkeypatch.setenv(
+        "FUND_NAV_SECURITY__CREDENTIAL_ENCRYPTION_KEY",
+        "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+    )
+    monkeypatch.setenv(
+        "FUND_NAV_SECURITY__AUDIT_SIGNING_KEY",
+        "Hh0cGxoZGBcWFRQTEhEQDw4NDAsKCQgHBgUEAwIBAAA",
+    )
     monkeypatch.setenv("FUND_NAV_EMAIL__HOST", "")
     monkeypatch.setenv("FUND_NAV_EMAIL__USERNAME", "")
     monkeypatch.setenv("FUND_NAV_EMAIL__PASSWORD", "")
@@ -42,9 +51,11 @@ def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[FastAPI, N
     get_database_manager.cache_clear()
     get_settings.cache_clear()
 
+    from app.db.base import Base
     from app.main import create_app
 
     application = create_app()
+    Base.metadata.create_all(get_database_manager().engine)
     yield application
 
     manager = get_database_manager()
