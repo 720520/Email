@@ -15,9 +15,12 @@ const fakeModule = (id: string, routeName: string, path: string, order = 10): Bu
 
 describe('业务模块注册中心', () => {
   it('聚合基金运营与租户管理模块的导航和路由', () => {
-    expect(businessModules.map((module) => module.id)).toEqual(['fund-operations', 'tenant-admin'])
+    expect(businessModules.map((module) => module.id)).toEqual([
+      'fund-operations', 'reporting', 'tenant-admin',
+    ])
     expect(businessRoutes.map((route) => route.name)).toEqual([
       'overview', 'emails', 'mailboxes', 'fund-nav', 'fund-products', 'exceptions', 'operations',
+      'reports',
       'tenant-management',
     ])
   })
@@ -40,5 +43,12 @@ describe('业务模块注册中心', () => {
     expect(() => registerBusinessModules([
       fakeModule('one', 'one', '/same'), fakeModule('two', 'two', '/same'),
     ])).toThrow('业务导航路径重复')
+  })
+
+  it('对子导航同样执行路径重复校验', () => {
+    const first = fakeModule('one', 'one', '/one')
+    first.navigation[0].children = [{ path: '/nested', title: '子页面', icon: {} }]
+    expect(() => registerBusinessModules([first, fakeModule('two', 'two', '/nested')]))
+      .toThrow('业务导航路径重复')
   })
 })

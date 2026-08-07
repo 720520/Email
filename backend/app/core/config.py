@@ -134,6 +134,13 @@ class StorageSettings(BaseModel):
         return filename
 
 
+class ReportSettings(BaseModel):
+    """合同与报表模板上传限制。"""
+
+    max_contract_bytes: int = Field(default=100 * 1024 * 1024, ge=1024)
+    max_template_bytes: int = Field(default=150 * 1024 * 1024, ge=1024)
+
+
 class SecuritySettings(BaseModel):
     """本地管理后台的会话安全配置。"""
 
@@ -182,6 +189,7 @@ class Settings(BaseSettings):
     scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
     excel: ExcelSettings = Field(default_factory=ExcelSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
+    reports: ReportSettings = Field(default_factory=ReportSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
 
     @model_validator(mode="after")

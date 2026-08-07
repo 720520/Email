@@ -15,10 +15,40 @@
   强制作用域、AES-GCM 凭据加密、追加式审计日志及邮箱级归档均已接通。
 - 产品要素归纳已开放：托管附件中的 21 项表格字段按估值日留存，产品按备案代码归并，
   投资经理与投资策略支持人工覆盖、恢复附件来源及审计留痕。
+- 报表中心已开放：支持内置竖版周报、租户 PPTX 模板、自定义报表区域、合同要素提取、
+  字段级来源标识与人工覆盖审计，并使用邮箱净值生成收益指标和净值曲线。
 
 ## 使用教程
 
 以下命令均在 Windows PowerShell 中执行。首次使用需要完成配置、数据库迁移和管理员创建；以后启动时只需要分别启动后端和前端。
+
+### Windows 一键启动（推荐）
+
+直接双击项目根目录的 `一键启动.cmd`。启动器会按需完成：
+
+1. 检测 Python 3.11/3.12；缺失时通过 `winget` 安装 Python 3.12。
+2. 创建 `.venv`，并在 `backend/pyproject.toml` 变化时自动更新后端依赖。
+3. 检测 Node.js 22/24 和 pnpm 11；缺失时通过 `winget`/`npm` 安装。
+4. 根据 `package.json` 和 `pnpm-lock.yaml` 变化自动更新前端依赖。
+5. 首次创建 `.env`，补齐邮箱凭据加密与审计签名密钥，不显示或覆盖已有密钥。
+6. 自动执行 Alembic 数据库迁移；没有平台管理员时，提示创建 `admin` 并输入密码。
+7. 分别打开后端和前端服务窗口，等待就绪后打开 <http://127.0.0.1:5173>。
+
+重复双击不会重置数据库、管理员、密钥或邮箱配置。停止系统时，在两个服务窗口中按
+`Ctrl+C` 或关闭窗口。若不希望自动打开浏览器，可在 PowerShell 中执行：
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\scripts\start.ps1 -NoBrowser
+```
+
+若只想安装依赖、初始化安全密钥并执行数据库迁移，不创建管理员或启动服务，可执行：
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\scripts\start.ps1 -SetupOnly
+```
+
+首次安装 Python、Node.js 或依赖需要联网，`winget` 可能显示 Windows 权限确认。若电脑
+没有 `winget`，请先手工安装 Python 3.12 和 Node.js 24 LTS，再重新双击启动器。
 
 ### 1. 配置邮箱
 
@@ -178,10 +208,14 @@ pnpm.cmd dev
 data/
 ├── fund_nav.db                    # SQLite 数据库
 └── tenants/{tenant_id}/
-    └── mailboxes/{mailbox_account_id}/YYYY/MM/DD/
-        ├── emails/                # 原始邮件
-        ├── attachments/           # 原始及人工上传附件
-        └── exports/               # 每日基金净值汇总.xlsx
+    ├── mailboxes/{mailbox_account_id}/YYYY/MM/DD/
+    │   ├── emails/            # 原始邮件
+    │   ├── attachments/       # 原始及人工上传附件
+    │   └── exports/           # 每日基金净值汇总.xlsx
+    └── reporting/
+        ├── contracts/             # 产品合同原文
+        ├── templates/             # 租户自定义 PPTX 模板
+        └── exports/YYYY/MM/        # 生成的 PPTX 报表
 ```
 
 ### 6. 常见问题
@@ -288,7 +322,7 @@ Outlook / Microsoft 365 若租户要求现代认证，可将 `auth_mode` 改为 
 
 ## 数据库与幂等规则
 
-SQLite 默认文件为 `data/fund_nav.db`，当前迁移版本为 `20260805_0005`。核心表包括：
+SQLite 默认文件为 `data/fund_nav.db`，当前迁移版本为 `20260807_0007`。核心表包括：
 
 - `tenant` / `tenant_membership`：业务账套及用户在账套内的角色
 - `mailbox_account`：邮箱非敏感配置、AES-GCM 凭据密文和最近连接/同步状态
@@ -300,6 +334,10 @@ SQLite 默认文件为 `data/fund_nav.db`，当前迁移版本为 `20260805_0005
 - `job_run`：定时任务与人工任务的执行审计
 - `app_user`：全局登录身份、平台管理员标记和会话失效版本；业务角色来自成员关系
 - `audit_event`：只追加、脱敏并由 HMAC 哈希链保护的合规操作记录
+- `product_document`：合同原文、文件哈希、提取状态及字段结果
+- `report_template`：内置/上传 PPTX 模板的租户级索引
+- `report_definition`：用户保存的产品、区域、日期和模板组合
+- `report_run`：每次报表生成的输入快照、输出路径、状态和错误
 
 净值写入仅提供新增语义，不提供覆盖接口。基金代码入库前会去除首尾空格并统一转成大写；同一产品代码和日期再次导入时，系统保留首次记录，并新增 `duplicate_nav` 异常。每个附件的净值、异常与状态在同一事务中提交，任一步骤失败会整体回滚。
 
@@ -351,6 +389,8 @@ Web“基金净值”页面的导出日期规则与 CLI 略有不同，更适合
 - 邮件管理：按关键词、收件日期和状态查询邮件审计记录，并安全预览原邮件或下载 `.eml` 归档
 - 基金净值：按产品与日期查询、导出日报、查看单产品历史净值曲线；产品筛选以下拉框展示数据库中已有历史净值的全部基金，同一基金的普通份额及 A/B/C 类份额归入同一分组并相邻排列
 - 产品要素：按备案代码归并产品主体，统计最新份额和资产规模，查看 21 项托管字段；
+- 报表中心：选择内置或租户 PPTX 模板，自定义报表区域，上传合同提取产品要素，预览
+  收益指标和净值曲线，并下载带输入快照的基金周报；
   表格字段只读，投资经理和投资策略允许运营人员或管理员编辑并恢复附件来源
 - 异常管理：分类筛选、查看异常关联的原始邮件，并由运营人员完成解决、忽略或重新打开
 - 人工处理：上传失败的 `.xls` / `.xlsx` 重新解析，文件与操作记录独立归档
@@ -367,6 +407,8 @@ Web“基金净值”页面的导出日期规则与 CLI 略有不同，更适合
 
 ## 项目代码结构与模块说明
 
+> 已确认但尚未修复的缺陷及临时风险控制见 [docs/known-issues.md](docs/known-issues.md)。
+
 本节是当前仓库的代码交接地图，描述的是已经存在的代码，而不是规划中的功能。`.venv/`、`frontend/node_modules/`、`frontend/dist/`、`data/`、`logs/` 等运行生成目录不属于业务源代码，因此不在源代码树中展开。
 
 ### 当前实现边界
@@ -379,6 +421,7 @@ Web“基金净值”页面的导出日期规则与 CLI 略有不同，更适合
 | EML、附件、清单归档 | 已实现 | `services/archive_service.py` |
 | XLS/XLSX 智能识别与标准化 | 已实现 | `parsers/` |
 | 产品要素快照、产品主档及说明维护 | 已实现 21 项表格字段、份额归并和人工说明留痕 | `db/models/fund_product.py`、`api/v1/fund_products.py`、`FundProductsView.vue` |
+| 合同要素与报表制作 | 已实现合同提取、字段来源/人工覆盖审计、内置和上传 PPTX 模板、自定义区域及净值曲线 | `services/reporting_service.py`、`services/report_presentation_service.py`、`api/v1/reports.py`、`ReportCenterView.vue` |
 | SQLite 持久化及幂等控制 | 已实现 | `db/`、`repositories/`、`services/persistence_service.py` |
 | 日报 Excel 导出 | 已实现 | `services/export_service.py`、`exports/` |
 | Web 登录及运营后台 | 已实现 | `api/`、`frontend/src/` |
@@ -428,6 +471,7 @@ Email/
 │   ├── config.example.yaml                # 可复制的生产配置模板
 │   └── excel_fields.yaml                  # Excel 标准字段别名和三类工作簿识别规则
 ├── docs/
+│   ├── known-issues.md                    # 已确认缺陷、风险控制和验收标准
 │   ├── stage-1-design.md                  # 阶段1架构与数据库设计
 │   ├── stage-5-storage.md                 # 阶段5持久化、事务和幂等说明
 │   ├── stage-6-export.md                  # 阶段6日报导出说明
@@ -436,10 +480,14 @@ Email/
 │   ├── fund_nav.db                        # SQLite 数据库
 │   ├── .email_uid_state/                  # IMAP UID 处理中/已完成幂等标记
 │   └── tenants/{tenant_id}/
-│       └── mailboxes/{mailbox_account_id}/YYYY/MM/DD/
-│           ├── emails/                    # 原始 .eml 和邮件 JSON 审计清单
-│           ├── attachments/               # 原始附件与人工上传附件
-│           └── exports/                   # 每日基金净值汇总.xlsx
+│       ├── mailboxes/{mailbox_account_id}/YYYY/MM/DD/
+│       │   ├── emails/                # 原始 .eml 和邮件 JSON 审计清单
+│       │   ├── attachments/           # 原始附件与人工上传附件
+│       │   └── exports/               # 每日基金净值汇总.xlsx
+│       └── reporting/
+│           ├── contracts/                 # 合同原文与提取来源
+│           ├── templates/                 # 租户自定义 PPTX 模板
+│           └── exports/YYYY/MM/            # 报表运行输出
 ├── logs/
 │   └── backend.log                        # JSON 格式、按大小滚动的后端日志
 ├── backend/
@@ -455,7 +503,8 @@ Email/
 │   │       ├── 20260804_0003_tenant_mailbox_audit.py # 租户、邮箱、作用域和审计
 │   │       ├── 20260805_0004_multi_mailbox.py # 多邮箱配置来源、运行状态和单默认约束
 │   │       ├── 20260805_0005_tenant_management.py # 平台管理员标记和租户管理开放
-│   │       └── 20260805_0006_product_elements.py # 产品主档和每日托管要素快照
+│   │       ├── 20260805_0006_product_elements.py # 产品主档和每日托管要素快照
+│   │       └── 20260807_0007_reporting_center.py # 合同要素、报表模板/任务及人工覆盖
 │   ├── app/
 │   │   ├── __init__.py                    # 后端包版本
 │   │   ├── main.py                        # FastAPI 应用工厂、生命周期、中间件和总路由
@@ -472,7 +521,8 @@ Email/
 │   │   │   │   ├── fund_product.py        # 产品统计、快照详情和说明编辑结构
 │   │   │   │   ├── audit.py               # 审计事件响应结构
 │   │   │   │   ├── mailbox.py             # 多邮箱配置、安全状态、成员和授权结构
-│   │   │   │   └── tenant.py              # 租户创建、编辑和成员关系结构
+│   │   │   │   ├── tenant.py              # 租户创建、编辑和成员关系结构
+│   │   │   │   └── reporting.py           # 合同、字段来源、模板、预览与生成结构
 │   │   │   └── v1/
 │   │   │       ├── __init__.py            # v1 路由包标记
 │   │   │       ├── router.py              # 汇总所有 `/api/v1` 子路由
@@ -486,7 +536,8 @@ Email/
 │   │   │       ├── fund_products.py       # 产品要素统计、详情和经理/策略维护
 │   │   │       ├── exceptions.py          # 异常筛选及解决/忽略状态更新
 │   │   │       ├── operations.py          # 人工上传 Excel 重新解析
-│   │   │       └── audit.py               # 管理员租户内审计日志查询
+│   │   │       ├── audit.py               # 管理员租户内审计日志查询
+│   │   │       └── reports.py             # 合同、要素、模板、预览、生成与下载 API
 │   │   ├── cli/
 │   │   │   ├── __init__.py                # CLI 包标记
 │   │   │   ├── create_admin.py            # 创建或更新管理员账号
@@ -520,7 +571,8 @@ Email/
 │   │   │       ├── tenant.py              # 租户、成员关系和邮箱用户授权
 │   │   │       ├── mailbox_account.py     # 独立邮箱连接配置和凭据密文
 │   │   │       ├── audit_event.py         # 追加式合规审计事件
-│   │   │       └── mixins.py              # 时间、租户及邮箱作用域公共列
+│   │   │       ├── mixins.py              # 时间、租户及邮箱作用域公共列
+│   │   │       └── reporting.py           # 合同文档、报表模板、定义和运行记录
 │   │   ├── domain/
 │   │   │   ├── __init__.py                # 领域规则包标记
 │   │   │   ├── fund_identity.py           # 份额类别排序和备案主体归并规则
@@ -564,7 +616,9 @@ Email/
 │   │   │   ├── auth_service.py                # 用户认证和账号创建
 │   │   │   ├── foundation_service.py          # 单邮箱到默认租户/邮箱的兼容引导
 │   │   │   ├── mailbox_account_service.py     # 多邮箱配置、授权、凭据加解密和运行配置
-│   │   │   └── audit_service.py               # 审计脱敏、追加写和 HMAC 链校验
+│   │   │   ├── audit_service.py               # 审计脱敏、追加写和 HMAC 链校验
+│   │   │   ├── reporting_service.py           # 合同提取、要素溯源、指标和生成快照
+│   │   │   └── report_presentation_service.py # 内置/上传 PPTX 渲染和净值曲线重建
 │   │   └── exports/
 │   │       ├── __init__.py                # 集中导出日报构建对象
 │   │       ├── models.py                  # 日报净值行和异常行传输对象
@@ -600,7 +654,8 @@ Email/
 │           ├── test_security.py            # 密码及会话签名
 │           ├── test_tenant_security.py     # 默认拒绝、跨租户隔离、凭据和审计链
 │           ├── test_uid_registry.py        # UID 原子预留和过期恢复
-│           └── test_workbook_reader.py     # XLS/XLSX 文件签名识别
+│           ├── test_workbook_reader.py     # XLS/XLSX 文件签名识别
+│           └── test_reporting_service.py   # 合同提取、人工覆盖和 PPTX 生成
 └── frontend/
     ├── package.json                       # Vue、Vite、Element Plus、测试命令与依赖
     ├── pnpm-lock.yaml                     # 锁定前端依赖的精确版本
@@ -632,7 +687,7 @@ Email/
             │   ├── index.ts               # 系统管理模块导航和路由
             │   ├── api/                    # 租户及成员管理请求与类型
             │   └── views/TenantManagementView.vue # 租户、成员和角色管理页面
-            └── fund-operations/
+            ├── fund-operations/
                 ├── index.ts               # 基金运营模块导航与懒加载路由
                 ├── api/index.ts           # 本模块全部后端请求函数
                 ├── api/types.ts           # 邮件、净值、异常等前端类型
@@ -647,6 +702,12 @@ Email/
                     ├── FundProductsView.vue # 产品要素统计、份额详情和说明编辑
                     ├── ExceptionListView.vue # 异常筛选、原邮件和处理状态
                     └── OperationsView.vue  # 人工上传重新解析
+            └── reporting/
+                ├── index.ts               # 独立报表业务模块、菜单和路由
+                ├── api/
+                │   ├── index.ts           # 报表要素、合同、模板、生成和下载请求
+                │   └── types.ts           # 报表预览、运行、模板和溯源类型
+                └── views/ReportCenterView.vue # 自定义区域、要素维护、预览和生成页
 ```
 
 ## 核心数据对象及传递边界
@@ -1105,6 +1166,48 @@ StandardNavRecord
 
 “产品要素”页面提供主体数量、最新份额数、去重后的资产净值和缺失说明统计；详情按
 总/A/B/C 份额展示最新 21 项字段，并明确显示有值字段数、来源附件和说明值来源。
+
+## 报表制作、合同要素与模板规则
+
+“报表中心”是独立一级业务模块，不属于邮件中心。标准流程为：
+
+```text
+选择产品与报告日期
+  ├─ 产品要素：合同提取值 / 邮件提取值 / 人工覆盖值
+  ├─ 净值数据：当前租户且当前用户有权访问的邮箱净值
+  ├─ 收益计算：月/季/半年/今年/一年/成立以来、年化、夏普和最大回撤
+  └─ 模板：内置竖版周报或租户上传的 PPTX
+        ↓
+  数据预览 → 保存自定义配置 → 生成 PPTX → 保存输入快照与审计事件
+```
+
+### 合同提取和人工修改
+
+- 支持上传 PDF、DOCX、TXT 合同，文件原文归档到
+  `data/tenants/{tenant_id}/reporting/contracts/`；扫描版 PDF 必须先完成 OCR。
+- 自动识别成立日期、策略分类、投资经理、管理人、托管机构、风险等级、开放日、存续期、
+  锁定期、管理费、托管费、申购/赎回费、业绩报酬和投资范围等字段。
+- 产品身份仍以托管表格中的产品代码或备案代码为准；合同中的代码和名称不能静默改写主档。
+- `source_profile` 保存合同/邮件来源值，`manual_profile` 只保存人工覆盖值，页面按人工值优先。
+  每次修改或恢复来源值都必须填写原因，并追加 `report_product_field.*` 审计事件。
+- 净值、累计净值和收益指标不提供人工修改入口，防止营销报表脱离托管原始数据。
+
+### 自定义报表和 PPTX 模板
+
+内置“标准基金周报”可自由勾选产品信息、收益指标、净值曲线、策略介绍、合同要素和免责声明。
+配置可保存为 `report_definition`，以后选择新的报告日期重复生成。
+
+租户模板必须为 `.pptx`。系统支持两种绑定方式：
+
+1. 在文本框或表格单元格中放置 `{{product_name}}`、`{{report_date}}`、
+   `{{investment_strategy}}`、`{{annualized_return}}` 等字段占位符。
+2. 沿用示例周报的结构化表头：产品信息表、收益指标表、合同要素表和折线图会自动识别。
+
+若模板图表连接外部 Excel，生成时会保留图表位置和尺寸，并替换为使用本地邮箱净值的内嵌图表；
+模板中无法由当前产品数据支持的旧基准行会被清空，禁止把其他产品的历史值带入新报表。
+模板归档在 `data/tenants/{tenant_id}/reporting/templates/`，生成结果归档在
+`data/tenants/{tenant_id}/reporting/exports/{年}/{月}/`。每次 `report_run` 保存所用模板、
+报告日期、字段来源、完整净值序列、计算指标和区域配置，生成或下载都受租户作用域控制。
 
 ## 净值持久化、幂等与状态传递
 

@@ -66,7 +66,18 @@ button { color: inherit; }
 .nav-item .el-icon { flex: 0 0 auto; font-size: 18px; }
 .nav-item:hover { color: #fff; background: rgba(255,255,255,.07); }
 .nav-item.active { color: #fff; background: linear-gradient(90deg, rgba(41,159,148,.35), rgba(41,159,148,.14)); box-shadow: inset 3px 0 #62c8bd; }
+.nav-group { margin: 4px 0; }
+.nav-group .nav-item { margin-top: 0; margin-bottom: 0; }
+.nav-group__trigger { position: relative; }
+.nav-group.has-active-child > .nav-group__trigger { color: #fff; background: rgba(255,255,255,.055); }
+.nav-group__trigger--static { cursor: default; }
+.nav-group__arrow { margin-left: auto; font-size: 13px !important; transition: transform .2s ease; }
+.nav-group__arrow.is-open { transform: rotate(180deg); }
+.nav-group__children { margin: 3px 0 8px 21px; padding: 2px 0 2px 9px; border-left: 1px solid rgba(141,199,194,.28); }
+.nav-group__children .nav-item--child { height: 38px; margin: 2px 0; padding: 0 10px; gap: 10px; font-size: 13px; }
+.nav-group__children .nav-item--child .el-icon { font-size: 15px; }
 .app-shell.is-collapsed .nav-item { justify-content: center; padding: 0; }
+.app-shell.is-collapsed .nav-group__trigger { margin: 4px 0; }
 .collapse-button {
   height: 54px; margin: 10px 14px 16px; display: flex; align-items: center; justify-content: center; gap: 9px;
   border: 1px solid rgba(255,255,255,.09); border-radius: 10px; color: #8fb0bd; background: rgba(0,0,0,.09); cursor: pointer;

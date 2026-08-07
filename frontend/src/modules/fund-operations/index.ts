@@ -1,20 +1,27 @@
-import { Collection, DataAnalysis, Document, House, Message, MessageBox, Warning } from '@element-plus/icons-vue'
+import { Collection, DataAnalysis, Document, House, Message, MessageBox, Setting, Warning } from '@element-plus/icons-vue'
 
 import type { BusinessModule } from '@/platform/modules/types'
 
 export const fundOperationsModule: BusinessModule = {
   id: 'fund-operations',
   title: '基金运营',
-  description: '邮件、净值、异常与日常复核',
+  description: '概览、邮件中心与业务数据',
   order: 10,
   navigation: [
     { path: '/overview', title: '运营概览', icon: House },
-    { path: '/emails', title: '邮件管理', icon: MessageBox },
-    { path: '/mailboxes', title: '邮箱账户', icon: Message },
+    {
+      path: '/email-center',
+      title: '邮件中心',
+      icon: Message,
+      children: [
+        { path: '/emails', title: '邮件管理', icon: MessageBox },
+        { path: '/mailboxes', title: '邮箱账户', icon: Setting },
+        { path: '/exceptions', title: '异常管理', icon: Warning },
+        { path: '/operations', title: '人工处理', icon: Document, permission: 'operator' },
+      ],
+    },
     { path: '/fund-nav', title: '基金净值', icon: DataAnalysis },
     { path: '/fund-products', title: '产品要素', icon: Collection },
-    { path: '/exceptions', title: '异常管理', icon: Warning },
-    { path: '/operations', title: '人工处理', icon: Document, permission: 'operator' },
   ],
   routes: [
     {

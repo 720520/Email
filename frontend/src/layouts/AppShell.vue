@@ -2,13 +2,14 @@
 import { ArrowDown, Check, Expand, Fold, Grid, OfficeBuilding, SwitchButton } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { businessModules } from '@/modules'
 import { apiErrorMessage } from '@/platform/api/http'
 import { useAuthStore } from '@/platform/auth/auth.store'
 import type { UserRole } from '@/platform/api/types'
+import type { ModuleNavigationItem } from '@/platform/modules/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -16,22 +17,52 @@ const auth = useAuthStore()
 const collapsed = ref(false)
 const mobileOpen = ref(false)
 const roleRank: Record<UserRole, number> = { viewer: 1, operator: 2, admin: 3 }
+
+function navigationMatches(item: ModuleNavigationItem, path: string): boolean {
+  return item.path === path || (item.children?.some((child) => navigationMatches(child, path)) ?? false)
+}
+
+function activeGroupPaths(path: string): string[] {
+  return businessModules.flatMap((module) =>
+    module.navigation
+      .filter((item) => item.children?.length && navigationMatches(item, path))
+      .map((item) => item.path),
+  )
+}
+
+const expandedGroups = ref<Set<string>>(new Set(activeGroupPaths(route.path)))
+
 const currentModule = computed(() =>
   businessModules.find((module) =>
-    module.navigation.some((item) => item.path === route.path),
+    module.navigation.some((item) => navigationMatches(item, route.path)),
   ) ?? businessModules[0],
 )
+
+function canAccessNavigation(item: ModuleNavigationItem): boolean {
+  if (!item.permission || !auth.user) return true
+  if (auth.user.is_platform_admin) return true
+  return roleRank[auth.user.role] >= roleRank[item.permission]
+}
+
+function filterNavigation(items: ModuleNavigationItem[]): ModuleNavigationItem[] {
+  return items
+    .filter(canAccessNavigation)
+    .map((item) => ({ ...item, children: item.children ? filterNavigation(item.children) : undefined }))
+    .filter((item) => !item.children || item.children.length > 0)
+}
 
 const visibleModules = computed(() =>
   businessModules.map((module) => ({
     ...module,
-    navigation: module.navigation.filter((item) => {
-      if (!item.permission || !auth.user) return true
-      if (auth.user.is_platform_admin) return true
-      return roleRank[auth.user.role] >= roleRank[item.permission]
-    }),
+    navigation: filterNavigation(module.navigation),
   })),
 )
+
+watch(() => route.path, (path) => {
+  const next = new Set(expandedGroups.value)
+  activeGroupPaths(path).forEach((groupPath) => next.add(groupPath))
+  expandedGroups.value = next
+})
 
 const roleLabel = computed(() => ({ admin: '管理员', operator: '运营人员', viewer: '只读用户' })[auth.user?.role ?? 'viewer'])
 const currentTenantName = computed(() => auth.user?.tenant_name ?? '未选择租户')
@@ -58,6 +89,18 @@ function navigate(path: string) {
   mobileOpen.value = false
   void router.push(path)
 }
+
+function isGroupExpanded(item: ModuleNavigationItem): boolean {
+  return expandedGroups.value.has(item.path)
+}
+
+function toggleGroup(item: ModuleNavigationItem) {
+  if (collapsed.value) collapsed.value = false
+  const next = new Set(expandedGroups.value)
+  if (isGroupExpanded(item)) next.delete(item.path)
+  else next.add(item.path)
+  expandedGroups.value = next
+}
 </script>
 
 <template>
@@ -77,17 +120,42 @@ function navigate(path: string) {
             <span>{{ module.title }}</span>
             <small>{{ module.description }}</small>
           </div>
-          <button
-            v-for="item in module.navigation"
-            :key="item.path"
-            class="nav-item"
-            :class="{ active: route.path === item.path }"
-            :title="collapsed ? item.title : undefined"
-            @click="navigate(item.path)"
-          >
-            <el-icon><component :is="item.icon" /></el-icon>
-            <span v-if="!collapsed">{{ item.title }}</span>
-          </button>
+          <template v-for="item in module.navigation" :key="item.path">
+            <div v-if="item.children?.length" class="nav-group" :class="{ 'has-active-child': navigationMatches(item, route.path) }">
+              <button
+                class="nav-item nav-group__trigger"
+                :title="collapsed ? item.title : undefined"
+                :aria-expanded="isGroupExpanded(item)"
+                @click="toggleGroup(item)"
+              >
+                <el-icon><component :is="item.icon" /></el-icon>
+                <span v-if="!collapsed">{{ item.title }}</span>
+                <el-icon v-if="!collapsed" class="nav-group__arrow" :class="{ 'is-open': isGroupExpanded(item) }"><ArrowDown /></el-icon>
+              </button>
+              <div v-if="!collapsed && isGroupExpanded(item)" class="nav-group__children">
+                <button
+                  v-for="child in item.children"
+                  :key="child.path"
+                  class="nav-item nav-item--child"
+                  :class="{ active: route.path === child.path }"
+                  @click="navigate(child.path)"
+                >
+                  <el-icon><component :is="child.icon" /></el-icon>
+                  <span>{{ child.title }}</span>
+                </button>
+              </div>
+            </div>
+            <button
+              v-else
+              class="nav-item"
+              :class="{ active: route.path === item.path }"
+              :title="collapsed ? item.title : undefined"
+              @click="navigate(item.path)"
+            >
+              <el-icon><component :is="item.icon" /></el-icon>
+              <span v-if="!collapsed">{{ item.title }}</span>
+            </button>
+          </template>
         </section>
       </nav>
 
@@ -105,9 +173,27 @@ function navigate(path: string) {
         </div>
         <section v-for="module in visibleModules" :key="module.id" class="nav-module">
           <div class="nav-module__header"><span>{{ module.title }}</span><small>{{ module.description }}</small></div>
-          <button v-for="item in module.navigation" :key="item.path" class="nav-item" @click="navigate(item.path)">
-            <el-icon><component :is="item.icon" /></el-icon><span>{{ item.title }}</span>
-          </button>
+          <template v-for="item in module.navigation" :key="item.path">
+            <div v-if="item.children?.length" class="nav-group has-active-child">
+              <div class="nav-item nav-group__trigger nav-group__trigger--static">
+                <el-icon><component :is="item.icon" /></el-icon><span>{{ item.title }}</span>
+              </div>
+              <div class="nav-group__children">
+                <button
+                  v-for="child in item.children"
+                  :key="child.path"
+                  class="nav-item nav-item--child"
+                  :class="{ active: route.path === child.path }"
+                  @click="navigate(child.path)"
+                >
+                  <el-icon><component :is="child.icon" /></el-icon><span>{{ child.title }}</span>
+                </button>
+              </div>
+            </div>
+            <button v-else class="nav-item" :class="{ active: route.path === item.path }" @click="navigate(item.path)">
+              <el-icon><component :is="item.icon" /></el-icon><span>{{ item.title }}</span>
+            </button>
+          </template>
         </section>
       </div>
     </el-drawer>

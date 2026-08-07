@@ -13,6 +13,7 @@ from app.api.v1 import (
     health,
     mailboxes,
     operations,
+    reports,
     tenants,
 )
 
@@ -28,3 +29,4 @@ api_router.include_router(fund_products.router, prefix="/fund-products", tags=["
 api_router.include_router(exceptions.router, prefix="/exceptions", tags=["异常管理"])
 api_router.include_router(audit.router, prefix="/audit-events", tags=["审计日志"])
 api_router.include_router(operations.router, prefix="/operations", tags=["运营操作"])
+api_router.include_router(reports.router, prefix="/reports", tags=["报表制作"])

@@ -40,6 +40,10 @@ def test_initial_migration_upgrade_check_and_downgrade(tmp_path: Path, monkeypat
         "job_run",
         "mailbox_account",
         "mailbox_user_grant",
+        "product_document",
+        "report_definition",
+        "report_run",
+        "report_template",
         "tenant",
         "tenant_membership",
     }
@@ -59,6 +63,10 @@ def test_initial_migration_upgrade_check_and_downgrade(tmp_path: Path, monkeypat
         item["name"] for item in inspector.get_unique_constraints("fund_product")
     }
     assert "uq_fund_product_tenant_product_code" in product_uniques
+    product_columns = {item["name"] for item in inspector.get_columns("fund_product")}
+    assert {"source_profile", "source_profile_meta", "manual_profile"}.issubset(
+        product_columns
+    )
     email_uniques = {item["name"] for item in inspector.get_unique_constraints("email_record")}
     assert "uq_email_record_scope_uidvalidity_uid" in email_uniques
     mailbox_columns = {item["name"] for item in inspector.get_columns("mailbox_account")}
@@ -79,6 +87,10 @@ def test_initial_migration_upgrade_check_and_downgrade(tmp_path: Path, monkeypat
         "exception_record",
         "fund_nav",
         "fund_product",
+        "product_document",
+        "report_definition",
+        "report_run",
+        "report_template",
         "audit_event",
     ):
         assert "tenant_id" in {item["name"] for item in inspector.get_columns(table_name)}

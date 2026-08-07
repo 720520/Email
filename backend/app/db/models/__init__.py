@@ -18,6 +18,7 @@ from app.db.models.fund_nav import FundNav
 from app.db.models.fund_product import FundProduct
 from app.db.models.job_run import JobRun
 from app.db.models.mailbox_account import MailboxAccount
+from app.db.models.reporting import ProductDocument, ReportDefinition, ReportRun, ReportTemplate
 from app.db.models.tenant import MailboxUserGrant, Tenant, TenantMembership
 
 __all__ = [
@@ -37,6 +38,10 @@ __all__ = [
     "JobType",
     "MailboxAccount",
     "MailboxUserGrant",
+    "ProductDocument",
+    "ReportDefinition",
+    "ReportRun",
+    "ReportTemplate",
     "Tenant",
     "TenantMembership",
     "TriggerType",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import Boolean, Date, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Date, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -42,6 +42,11 @@ class FundProduct(TenantOwnedMixin, TimestampMixin, Base):
         Boolean, nullable=False, default=False
     )
 
+    # 合同/邮件提取的扩展要素与人工覆盖分层保存；字段级来源写入 source_profile_meta。
+    source_profile: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    source_profile_meta: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    manual_profile: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
     latest_source_file: Mapped[str | None] = mapped_column(String(500))
     latest_source_date: Mapped[date | None] = mapped_column(Date)
 
@@ -56,3 +61,8 @@ class FundProduct(TenantOwnedMixin, TimestampMixin, Base):
         if self.investment_strategy_manual:
             return self.manual_investment_strategy_info
         return self.source_investment_strategy_info
+
+    def effective_profile(self) -> dict:
+        """返回人工值优先的有效要素，不改变任何来源数据。"""
+
+        return {**(self.source_profile or {}), **(self.manual_profile or {})}

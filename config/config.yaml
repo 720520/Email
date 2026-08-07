@@ -74,6 +74,10 @@ storage:
   archive_timezone: Asia/Shanghai
   daily_export_filename: 每日基金净值汇总.xlsx
 
+reports:
+  max_contract_bytes: 104857600
+  max_template_bytes: 157286400
+
 security:
   secret_key: development-only-secret-change-me
   session_cookie_name: fund_nav_session

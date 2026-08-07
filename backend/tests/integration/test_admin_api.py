@@ -170,6 +170,42 @@ def test_login_and_protected_operational_queries(app: FastAPI) -> None:
             "/api/v1/fund-products/1/profile",
             json={"investment_manager_info": "人工经理信息"},
         )
+        report_templates = client.get("/api/v1/reports/templates")
+        report_fields = client.get("/api/v1/reports/product-fields/1")
+        report_field_updated = client.patch(
+            "/api/v1/reports/product-fields/1/inception_date",
+            json={"value": "2026-01-01", "reason": "合同运营复核"},
+        )
+        contract_uploaded = client.post(
+            "/api/v1/reports/contracts/1",
+            files={
+                "file": (
+                    "测试合同.txt",
+                    "基金管理人：吉余私募基金管理有限公司\n"
+                    "托管机构：测试托管机构\n风险等级：R4\n管理费率：1.00%".encode(),
+                    "text/plain",
+                )
+            },
+        )
+        report_preview = client.post(
+            "/api/v1/reports/preview",
+            json={"fund_product_id": 1},
+        )
+        report_definition = client.post(
+            "/api/v1/reports/definitions",
+            json={
+                "name": "测试周报",
+                "fund_product_id": 1,
+                "template_key": "builtin:weekly",
+                "sections": ["product_info", "performance", "nav_chart"],
+            },
+        )
+        report_generated = client.post(
+            "/api/v1/reports/generate",
+            json={"definition_id": 1},
+        )
+        report_runs = client.get("/api/v1/reports/runs")
+        report_download = client.get("/api/v1/reports/runs/1/download")
         exceptions = client.get("/api/v1/exceptions", params={"category": "净值为空"})
         other_exceptions = client.get(
             "/api/v1/exceptions",
@@ -228,6 +264,24 @@ def test_login_and_protected_operational_queries(app: FastAPI) -> None:
     assert product_updated.json()["investment_manager_info"] == "人工经理信息"
     assert product_updated.json()["investment_manager_manual"] is True
     assert product_updated.json()["source_investment_manager_info"] == "附件经理信息"
+    assert report_templates.json()[0]["key"] == "builtin:weekly"
+    assert report_fields.status_code == 200
+    assert report_field_updated.status_code == 200
+    assert next(
+        item for item in report_field_updated.json()["fields"] if item["key"] == "inception_date"
+    )["is_manual"] is True
+    assert contract_uploaded.status_code == 200
+    assert (
+        contract_uploaded.json()["extracted_fields"]["manager_name"]
+        == "吉余私募基金管理有限公司"
+    )
+    assert report_preview.status_code == 200
+    assert report_preview.json()["nav_series"][-1]["unit_nav"] == "1.12345678"
+    assert report_definition.status_code == 200
+    assert report_generated.status_code == 200
+    assert report_runs.json()[0]["status"] == "success"
+    assert report_download.status_code == 200
+    assert report_download.content.startswith(b"PK")
     assert exceptions.json()["items"][0]["category"] == "净值为空"
     assert other_exceptions.json()["total"] == 1
     assert exceptions.json()["items"][0]["email_id"] == 1
