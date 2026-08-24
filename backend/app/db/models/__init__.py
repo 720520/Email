@@ -14,6 +14,7 @@ from app.db.models.enums import (
     UserRole,
 )
 from app.db.models.exception_record import ExceptionRecord
+from app.db.models.filing_profile import FilingField, FilingFileVersion, FilingProfile
 from app.db.models.fund_nav import FundNav
 from app.db.models.fund_product import FundProduct
 from app.db.models.job_run import JobRun
@@ -45,6 +46,9 @@ __all__ = [
     "ExceptionRecord",
     "ExceptionSeverity",
     "ExceptionStatus",
+    "FilingProfile",
+    "FilingField",
+    "FilingFileVersion",
     "FundNav",
     "FundProduct",
     "JobRun",

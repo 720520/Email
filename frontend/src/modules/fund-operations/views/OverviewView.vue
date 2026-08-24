@@ -104,9 +104,9 @@ onMounted(loadNavStatus)
 <template>
   <div v-loading="loading">
     <PageHeader
-      eyebrow="Fund Operations"
-      title="基金运营数据概览"
-      description="聚合当天邮件、净值与异常状态，优先暴露需要人工介入的运营事项。"
+      eyebrow="Daily Operations"
+      title="把今天的运营工作，收进一张台账。"
+      description="净值更新、邮件解析、异常和报表任务在这里汇合，优先呈现需要人工介入的事项。"
     >
       <el-button :loading="loading" @click="loadDashboard">刷新数据</el-button>
     </PageHeader>
@@ -238,9 +238,19 @@ onMounted(loadNavStatus)
 .platform-link { display: inline-flex; align-items: center; gap: 5px; color: var(--el-color-primary); font-size: 12px; text-decoration: none; }
 .platform-link:hover { text-decoration: underline; }
 .status-toolbar { display: flex; align-items: center; gap: 12px; }
-.status-summary { padding: 14px 18px; display: flex; gap: 24px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: #fafcfc; color: var(--ink-600); font-size: 12px; }
+.status-summary { padding: 14px 18px; display: flex; gap: 24px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: #f5f0e8; color: var(--ink-600); font-size: 12px; }
 .status-summary strong { margin-left: 5px; color: var(--ink-900); font-size: 18px; }
 .status-summary .is-success, .status-summary .is-success strong { color: var(--el-color-success); }
 .status-summary .is-warning, .status-summary .is-warning strong { color: var(--el-color-warning); }
 .status-summary .is-danger, .status-summary .is-danger strong, .missing-shares { color: var(--el-color-danger); }
+.metric-grid .metric-card:nth-child(2) { color: #faf9f5; background: #181715; border-color: #181715; }
+.metric-grid .metric-card:nth-child(2) .metric-card__copy small,
+.metric-grid .metric-card:nth-child(2) .metric-card__copy strong,
+.metric-grid .metric-card:nth-child(2) .metric-card__copy span { color: #faf9f5; }
+.metric-grid .metric-card:nth-child(4) { color: #fff; background: #cc785c; border-color: #cc785c; }
+.metric-grid .metric-card:nth-child(4) .metric-card__copy small,
+.metric-grid .metric-card:nth-child(4) .metric-card__copy strong,
+.metric-grid .metric-card:nth-child(4) .metric-card__copy span { color: #fff; }
+.metric-grid .metric-card:nth-child(2) .metric-card__icon { color: #faf9f5 !important; background: #252320 !important; }
+.metric-grid .metric-card:nth-child(4) .metric-card__icon { color: #cc785c !important; background: #faf9f5 !important; }
 </style>

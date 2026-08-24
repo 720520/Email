@@ -636,8 +636,8 @@ onUnmounted(() => {
   <div v-loading="loading">
     <PageHeader
       eyebrow="Report Studio"
-      title="报表中心"
-      description="选择模板或自定义报表区域；产品要素显示合同、邮件或人工来源，净值曲线只使用已归档的邮箱净值数据。"
+      title="报表工坊"
+      description="选择模板、拖入字段、校准位置，再用一个已发布版本批量生成全部产品的 PPTX。"
     >
       <template #actions>
         <el-button v-if="canEdit" :icon="UploadFilled" @click="templateDialogVisible = true">上传模板</el-button>
@@ -885,38 +885,38 @@ onUnmounted(() => {
 .builder-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .option-note { float: right; margin-left: 24px; color: #84949b; }
 .preview-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; overflow: hidden; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--line); }
-.preview-metrics div { padding: 12px 14px; display: grid; gap: 5px; background: #fff; }
+.preview-metrics div { padding: 12px 14px; display: grid; gap: 5px; background: #fffefa; }
 .preview-metrics small { color: var(--ink-600); }
 .preview-metrics strong { color: var(--navy-800); font-size: 20px; font-variant-numeric: tabular-nums; }
 .data-note { margin: 8px 0 0; color: var(--ink-600); font-size: 12px; text-align: right; }
 .field-panel, .run-panel, .batch-panel, .design-panel { margin-top: 18px; }
 .design-actions { display: flex; gap: 8px; }
 .design-workspace { min-height: 680px; display: grid; grid-template-columns: 280px minmax(0, 1fr); border-top: 1px solid var(--line); }
-.placeholder-panel { max-height: 680px; padding: 14px; overflow: auto; border-right: 1px solid var(--line); background: #f8faf9; }
+.placeholder-panel { max-height: 680px; padding: 14px; overflow: auto; border-right: 1px solid var(--line); background: #f5f0e8; }
 .placeholder-panel h3 { margin: 18px 2px 8px; color: var(--navy-800); font-size: 13px; }
 .placeholder-item { width: 100%; padding: 9px 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--ink-900); cursor: pointer; text-align: left; }
-.placeholder-item:hover { border-color: var(--line); background: #fff; }
+.placeholder-item:hover { border-color: var(--line); background: #fffefa; }
 .placeholder-item span { min-width: 0; display: grid; gap: 2px; }
 .placeholder-item strong, .placeholder-item small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .placeholder-item strong { font-size: 12px; }
 .placeholder-item small { color: var(--ink-600); font-size: 10px; }
-.pptx-frame-shell { min-width: 0; min-height: 680px; position: relative; background: #eef3f3; }
+.pptx-frame-shell { min-width: 0; min-height: 680px; position: relative; background: #efe9de; }
 .pptx-frame { width: 100%; height: 680px; display: block; border: 0; }
-.design-mode-toolbar { height: 48px; padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--line); background: #fff; }
+.design-mode-toolbar { height: 48px; padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--line); background: #fffefa; }
 .design-mode-toolbar > :last-child { margin-left: auto; }
 .layout-editor { min-height: 632px; padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr) 210px; align-items: start; gap: 18px; overflow: auto; }
-.slide-canvas { width: min(100%, 900px); aspect-ratio: 16 / 9; position: relative; overflow: hidden; border: 1px solid #cad7d7; border-radius: 4px; background: #fff; box-shadow: 0 12px 32px rgba(23,59,77,.12); }
+.slide-canvas { width: min(100%, 900px); aspect-ratio: 16 / 9; position: relative; overflow: hidden; border: 1px solid #d8cec5; border-radius: 4px; background: #fff; box-shadow: 0 12px 32px rgba(48,38,30,.12); }
 .slide-canvas::after { content: '将字段拖到这里'; position: absolute; inset: 50% auto auto 50%; transform: translate(-50%, -50%); color: #bdc9cc; font-size: 13px; pointer-events: none; }
 .layout-field { z-index: 2; position: absolute; padding: 5px 7px; overflow: hidden; border: 1px dashed #23a69a; background: rgba(232,250,247,.92); cursor: move; user-select: none; touch-action: none; white-space: nowrap; text-overflow: ellipsis; }
-.layout-field--selected { border: 2px solid #0d8e83; box-shadow: 0 0 0 3px rgba(13,142,131,.14); }
-.layout-properties { padding: 14px; display: grid; gap: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.layout-field--selected { border: 2px solid #cc785c; box-shadow: 0 0 0 3px rgba(204,120,92,.14); }
+.layout-properties { padding: 14px; display: grid; gap: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fffefa; }
 .layout-properties h3 { margin: 0; color: var(--navy-800); font-size: 14px; }
-.layout-properties code { padding: 7px; overflow-wrap: anywhere; border-radius: 6px; background: #f1f5f4; font-size: 10px; }
+.layout-properties code { padding: 7px; overflow-wrap: anywhere; border-radius: 6px; background: #efe9de; font-size: 10px; }
 .layout-properties label { display: grid; gap: 4px; color: var(--ink-600); font-size: 11px; }
 .batch-actions { display: flex; justify-content: flex-end; gap: 8px; margin: 14px 0; }
 .field-groups { padding: 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .field-group { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; }
-.field-group h3 { margin: 0; padding: 11px 14px; color: var(--navy-800); background: #f5f8f7; font-size: 13px; }
+.field-group h3 { margin: 0; padding: 11px 14px; color: var(--navy-800); background: #f5f0e8; font-size: 13px; }
 .field-row { min-height: 58px; padding: 9px 12px; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 9px; border-top: 1px solid #edf2f1; }
 .field-copy { min-width: 0; display: grid; gap: 2px; }
 .field-copy span, .field-copy small { overflow: hidden; color: #829198; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }

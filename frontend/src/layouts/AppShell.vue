@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ArrowDown, Check, Expand, Fold, Grid, OfficeBuilding, SwitchButton } from '@element-plus/icons-vue'
+import { ArrowDown, Check, Expand, Fold, OfficeBuilding, Search, SwitchButton } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { businessModules } from '@/modules'
@@ -16,6 +16,8 @@ const router = useRouter()
 const auth = useAuthStore()
 const collapsed = ref(false)
 const mobileOpen = ref(false)
+const commandVisible = ref(false)
+const commandQuery = ref('')
 const roleRank: Record<UserRole, number> = { viewer: 1, operator: 2, admin: 3 }
 
 function navigationMatches(item: ModuleNavigationItem, path: string): boolean {
@@ -58,6 +60,10 @@ const visibleModules = computed(() =>
   })),
 )
 
+const commandItems = computed(() => visibleModules.value.flatMap((module) =>
+  module.navigation.flatMap((item) => item.children?.length ? item.children : [item]),
+).filter((item) => !commandQuery.value.trim() || item.title.includes(commandQuery.value.trim())))
+
 watch(() => route.path, (path) => {
   const next = new Set(expandedGroups.value)
   activeGroupPaths(path).forEach((groupPath) => next.add(groupPath))
@@ -87,6 +93,8 @@ async function signOut() {
 
 function navigate(path: string) {
   mobileOpen.value = false
+  commandVisible.value = false
+  commandQuery.value = ''
   void router.push(path)
 }
 
@@ -101,16 +109,26 @@ function toggleGroup(item: ModuleNavigationItem) {
   else next.add(item.path)
   expandedGroups.value = next
 }
+
+function handleCommandShortcut(event: KeyboardEvent) {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault()
+    commandVisible.value = true
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', handleCommandShortcut))
+onUnmounted(() => window.removeEventListener('keydown', handleCommandShortcut))
 </script>
 
 <template>
   <div class="app-shell" :class="{ 'is-collapsed': collapsed }">
     <aside class="sidebar desktop-sidebar">
       <div class="brand" @click="navigate('/overview')">
-        <span class="brand__mark"><el-icon><Grid /></el-icon></span>
+        <span class="brand__mark">✣</span>
         <span v-if="!collapsed" class="brand__copy">
-          <strong>运营工作台</strong>
-          <small>Operations Hub</small>
+          <strong>Fundfolio</strong>
+          <small>Operations atelier</small>
         </span>
       </div>
 
@@ -168,8 +186,8 @@ function toggleGroup(item: ModuleNavigationItem) {
     <el-drawer v-model="mobileOpen" direction="ltr" size="280px" :with-header="false">
       <div class="mobile-menu">
         <div class="brand">
-          <span class="brand__mark"><el-icon><Grid /></el-icon></span>
-          <span class="brand__copy"><strong>运营工作台</strong><small>Operations Hub</small></span>
+          <span class="brand__mark">✣</span>
+          <span class="brand__copy"><strong>Fundfolio</strong><small>Operations atelier</small></span>
         </div>
         <section v-for="module in visibleModules" :key="module.id" class="nav-module">
           <div class="nav-module__header"><span>{{ module.title }}</span><small>{{ module.description }}</small></div>
@@ -207,6 +225,9 @@ function toggleGroup(item: ModuleNavigationItem) {
           <span class="workspace-indicator__dot"></span>
           <div><small>当前业务模块</small><strong>{{ currentModule?.title ?? '运营工作台' }}</strong></div>
         </div>
+        <button class="command-trigger" @click="commandVisible = true">
+          <el-icon><Search /></el-icon><span>搜索页面或执行命令</span><kbd>⌘ K</kbd>
+        </button>
         <div class="topbar__right">
           <el-dropdown trigger="click" @command="switchTenant">
             <button class="tenant-switcher" :title="`当前租户：${currentTenantName}`">
@@ -251,5 +272,15 @@ function toggleGroup(item: ModuleNavigationItem) {
         </router-view>
       </section>
     </main>
+
+    <el-dialog v-model="commandVisible" width="min(560px, 92vw)" class="command-dialog" :show-close="false" append-to-body>
+      <el-input v-model="commandQuery" size="large" placeholder="搜索产品台账、邮件、净值或报表…" :prefix-icon="Search" autofocus />
+      <div class="command-results">
+        <button v-for="item in commandItems" :key="item.path" @click="navigate(item.path)">
+          <span><el-icon><component :is="item.icon" /></el-icon>{{ item.title }}</span><small>{{ item.path }}</small>
+        </button>
+        <el-empty v-if="!commandItems.length" :image-size="54" description="没有匹配页面" />
+      </div>
+    </el-dialog>
   </div>
 </template>

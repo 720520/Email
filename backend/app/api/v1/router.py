@@ -8,6 +8,7 @@ from app.api.v1 import (
     dashboard,
     emails,
     exceptions,
+    filing_profile,
     fund_nav,
     fund_products,
     health,
@@ -29,6 +30,7 @@ api_router.include_router(tenants.router, prefix="/tenants", tags=["租户管理
 api_router.include_router(fund_nav.router, prefix="/fund-nav", tags=["基金净值"])
 api_router.include_router(fund_products.router, prefix="/fund-products", tags=["产品要素"])
 api_router.include_router(exceptions.router, prefix="/exceptions", tags=["异常管理"])
+api_router.include_router(filing_profile.router, prefix="/filing-profile", tags=["备案资料库"])
 api_router.include_router(audit.router, prefix="/audit-events", tags=["审计日志"])
 api_router.include_router(operations.router, prefix="/operations", tags=["运营操作"])
 api_router.include_router(reports.router, prefix="/reports", tags=["报表制作"])

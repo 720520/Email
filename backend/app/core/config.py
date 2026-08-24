@@ -122,6 +122,7 @@ class StorageSettings(BaseModel):
     data_directory: Path = Path("data")
     archive_timezone: str = "Asia/Shanghai"
     daily_export_filename: str = "每日基金净值汇总.xlsx"
+    max_filing_file_bytes: int = Field(default=100 * 1024 * 1024, ge=1024)
 
     @field_validator("daily_export_filename")
     @classmethod

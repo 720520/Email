@@ -44,3 +44,50 @@ export interface TenantMemberUpdatePayload {
   role: UserRole
   is_active: boolean
 }
+
+export interface FilingFieldDefinition {
+  id: number
+  key: string
+  label: string
+  category: string
+  field_type: 'text' | 'file'
+  sensitive: boolean
+  multiline: boolean
+  source_forms: string[]
+  sort_order: number
+  file_versions: FilingFileVersion[]
+}
+
+export interface FilingProfile {
+  tenant_name: string
+  can_edit: boolean
+  fields: FilingFieldDefinition[]
+  field_values: Record<string, string>
+  update_time: string | null
+}
+
+export interface FilingProfilePayload {
+  field_values: Record<string, string>
+}
+
+export interface FilingFileVersion {
+  id: number
+  version: number
+  original_name: string
+  file_size: number
+  content_type: string | null
+  content_hash: string
+  created_by: string
+  create_time: string
+  download_url: string
+}
+
+export interface FilingFieldPayload {
+  label: string
+  category: string
+  field_type: 'text' | 'file'
+  sensitive: boolean
+  multiline: boolean
+  source_forms: string[]
+  sort_order: number
+}

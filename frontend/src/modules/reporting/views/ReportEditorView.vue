@@ -123,7 +123,7 @@ onUnmounted(() => {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: #eef3f3;
+  background: #efe9de;
 }
 .editor-page--embedded { position: absolute; }
 .editor-toolbar {
@@ -134,7 +134,7 @@ onUnmounted(() => {
   gap: 16px;
   padding: 0 18px 0 10px;
   border-bottom: 1px solid var(--line);
-  background: #fff;
+  background: #faf9f5;
 }
 .editor-toolbar__title,
 .editor-toolbar__actions { display: flex; align-items: center; gap: 10px; }
@@ -147,7 +147,7 @@ onUnmounted(() => {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: #fff;
+  background: #faf9f5;
 }
 #onlyoffice-editor { width: 100%; height: 100%; }
 @media (max-width: 640px) {

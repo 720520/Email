@@ -14,6 +14,7 @@ defineProps<{
       <p>{{ description }}</p>
     </div>
     <div class="page-heading__actions">
+      <slot name="actions" />
       <slot />
     </div>
   </header>

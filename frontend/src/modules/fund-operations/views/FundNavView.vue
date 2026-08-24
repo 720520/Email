@@ -12,6 +12,8 @@ import type { FundHistory, FundNavItem, MailboxAccount, ProductOption } from '..
 import { resolveExportDate } from '../utils/export-date'
 import { groupProductOptions, productOptionLabel } from '../utils/product-options'
 
+withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
+
 const loading = ref(false)
 const exporting = ref(false)
 const latestDateLoading = ref(false)
@@ -136,6 +138,7 @@ onMounted(async () => {
 <template>
   <div>
     <PageHeader
+      v-if="!embedded"
       eyebrow="NAV Ledger"
       title="基金净值"
       description="查询标准化后的历史净值，查看单只产品曲线，并按估值日导出运营汇总。"
@@ -148,6 +151,11 @@ onMounted(async () => {
         @click="exportReport"
       >{{ exportDate ? `导出 ${exportDate}` : '暂无可导出净值' }}</el-button>
     </PageHeader>
+
+    <div v-else class="embedded-nav-header">
+      <div><small>净值数据</small><h2>净值明细</h2><p>查询各产品份额的历史净值、来源附件与净值曲线。</p></div>
+      <el-button :icon="Download" type="primary" :loading="exporting || latestDateLoading" :disabled="!exportDate" @click="exportReport">{{ exportDate ? `导出 ${exportDate}` : '暂无可导出净值' }}</el-button>
+    </div>
 
     <section class="panel filter-panel">
       <el-form class="filter-form" label-position="top" @submit.prevent="search">
@@ -242,3 +250,11 @@ onMounted(async () => {
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.embedded-nav-header { margin-bottom: 18px; padding: 18px 20px; display: flex; align-items: center; justify-content: space-between; gap: 20px; border: 1px solid #e5ddd3; border-radius: 12px; background: #fffefa; }
+.embedded-nav-header small { color: #cc785c; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.embedded-nav-header h2 { margin: 3px 0 4px; color: #181715; font-family: Georgia, "Times New Roman", serif; font-size: 22px; font-weight: 400; }
+.embedded-nav-header p { margin: 0; color: #7b7973; font-size: 11px; }
+@media (max-width: 620px) { .embedded-nav-header { align-items: flex-start; flex-direction: column; } }
+</style>

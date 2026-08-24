@@ -1,4 +1,4 @@
-import { Collection, DataAnalysis, Document, House, Message, MessageBox, Setting, Warning } from '@element-plus/icons-vue'
+import { Collection, Document, House, Message, MessageBox, Setting, Warning } from '@element-plus/icons-vue'
 
 import type { BusinessModule } from '@/platform/modules/types'
 
@@ -20,8 +20,7 @@ export const fundOperationsModule: BusinessModule = {
         { path: '/operations', title: '人工处理', icon: Document, permission: 'operator' },
       ],
     },
-    { path: '/fund-nav', title: '基金净值', icon: DataAnalysis },
-    { path: '/fund-products', title: '产品要素', icon: Collection },
+    { path: '/fund-products', title: '产品中心', icon: Collection },
   ],
   routes: [
     {
@@ -45,14 +44,13 @@ export const fundOperationsModule: BusinessModule = {
     {
       path: '/fund-nav',
       name: 'fund-nav',
-      component: () => import('./views/FundNavView.vue'),
-      meta: { title: '基金净值' },
+      redirect: { path: '/fund-products', query: { view: 'nav' } },
     },
     {
       path: '/fund-products',
       name: 'fund-products',
       component: () => import('./views/FundProductsView.vue'),
-      meta: { title: '产品要素' },
+      meta: { title: '产品中心' },
     },
     {
       path: '/exceptions',

@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { EditPen, Link, RefreshRight, Search, View } from '@element-plus/icons-vue'
+import { EditPen, Grid, Link, List, RefreshRight, Search, View } from '@element-plus/icons-vue'
+import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/platform/api/http'
 import { useAuthStore } from '@/platform/auth/auth.store'
+import FundNavView from './FundNavView.vue'
 
 import {
   getFundProduct,
+  getFundProductNavUpdateStatus,
   getFundProducts,
   getFundProductSummary,
   updateFundProductProfile,
@@ -17,6 +20,8 @@ import {
 import type {
   FundProductDetail,
   FundProductItem,
+  FundProductNavUpdateItem,
+  FundProductNavUpdateSummary,
   FundProductProfilePayload,
   FundProductSnapshot,
   FundProductSummary,
@@ -24,6 +29,8 @@ import type {
 
 const auth = useAuthStore()
 const route = useRoute()
+const router = useRouter()
+const workspaceTab = ref<'ledger' | 'nav'>(route.query.view === 'nav' ? 'nav' : 'ledger')
 const loading = ref(false)
 const detailLoading = ref(false)
 const saving = ref(false)
@@ -34,8 +41,18 @@ const detail = ref<FundProductDetail>()
 const detailVisible = ref(false)
 const editVisible = ref(false)
 const filters = reactive({ keyword: '', page: 1, pageSize: 20 })
+const viewMode = ref<'cards' | 'table'>('cards')
+const statusDate = ref(dayjs().format('YYYY-MM-DD'))
+const onlyPending = ref(false)
+const navStatus = ref<FundProductNavUpdateSummary>()
 const profileForm = reactive({ manager: '', strategy: '', platformUrl: '' })
 const canEdit = computed(() => auth.user?.is_platform_admin || auth.user?.role !== 'viewer')
+const navStatusMap = computed(() => new Map(
+  (navStatus.value?.items ?? []).map((item) => [item.product_id, item]),
+))
+const visibleRows = computed(() => onlyPending.value
+  ? rows.value.filter((item) => navStatusMap.value.get(item.id)?.status !== 'updated')
+  : rows.value)
 
 function formatMoney(value: string | null | undefined) {
   if (!value) return '—'
@@ -69,6 +86,38 @@ async function loadRows() {
 async function loadSummary() {
   try { summary.value = await getFundProductSummary() }
   catch (error) { ElMessage.error(apiErrorMessage(error)) }
+}
+
+async function loadNavStatus() {
+  try { navStatus.value = await getFundProductNavUpdateStatus(statusDate.value) }
+  catch (error) { ElMessage.error(apiErrorMessage(error)) }
+}
+
+function productStatus(productId: number): FundProductNavUpdateItem | undefined {
+  return navStatusMap.value.get(productId)
+}
+
+function statusLabel(status?: string) {
+  return ({ updated: '已更新', partial: '部分更新', pending: '待更新' } as Record<string, string>)[status ?? ''] ?? '待核对'
+}
+
+function statusType(status?: string) {
+  return status === 'updated' ? 'success' : status === 'partial' ? 'warning' : 'danger'
+}
+
+function shareLabel(code: string, index: number) {
+  const match = code.match(/(?:[-_\s]|^)([ABC])(?:类)?$/i) ?? code.match(/([ABC])$/i)
+  return match ? `${match[1]!.toUpperCase()}类` : `份额${index + 1}`
+}
+
+function expectedShares(status?: FundProductNavUpdateItem) {
+  if (!status) return []
+  const codes = [...status.updated_share_codes, ...status.missing_share_codes]
+  return [...new Set(codes)].map((code, index) => ({
+    code,
+    label: shareLabel(code, index),
+    updated: status.updated_share_codes.includes(code),
+  }))
 }
 
 function search() { filters.page = 1; void loadRows() }
@@ -134,9 +183,17 @@ function snapshotLabel(item: FundProductSnapshot) {
 }
 
 watch(() => filters.pageSize, search)
+watch(workspaceTab, (value) => {
+  const query = { ...route.query }
+  if (value === 'nav') query.view = 'nav'
+  else delete query.view
+  void router.replace({ query })
+})
+watch(() => route.query.view, (value) => { workspaceTab.value = value === 'nav' ? 'nav' : 'ledger' })
 onMounted(() => {
   void loadRows()
   void loadSummary()
+  void loadNavStatus()
   const productId = Number(route.query.product)
   if (Number.isInteger(productId) && productId > 0) void showDetail(productId)
 })
@@ -146,9 +203,16 @@ onMounted(() => {
   <div>
     <PageHeader
       eyebrow="Product Master"
-      title="产品要素"
-      description="以托管附件表格为产品要素事实来源，按备案代码归并份额；投资经理和投资策略可人工维护并保留审计轨迹。"
+      title="产品中心"
+      description="在一个视图中理解产品、托管机构、投资策略、净值覆盖和外部平台入口。"
     />
+
+    <nav class="product-center-tabs" aria-label="产品中心视图">
+      <button :class="{ active: workspaceTab === 'ledger' }" type="button" @click="workspaceTab = 'ledger'">产品台账</button>
+      <button :class="{ active: workspaceTab === 'nav' }" type="button" @click="workspaceTab = 'nav'">净值明细</button>
+    </nav>
+
+    <template v-if="workspaceTab === 'ledger'">
 
     <section class="product-metrics">
       <article class="product-metric"><small>产品主体</small><strong>{{ summary?.product_count ?? '—' }}</strong><span>按备案/产品代码归并</span></article>
@@ -162,20 +226,47 @@ onMounted(() => {
         <el-form-item label="产品名称或备案代码">
           <el-input v-model="filters.keyword" clearable placeholder="输入关键词" style="width: 320px" @keyup.enter="search" />
         </el-form-item>
+        <el-form-item label="净值核对日期">
+          <el-date-picker v-model="statusDate" type="date" value-format="YYYY-MM-DD" :clearable="false" style="width: 150px" @change="loadNavStatus" />
+        </el-form-item>
+        <el-form-item label="显示范围"><el-switch v-model="onlyPending" active-text="仅看待更新" /></el-form-item>
         <el-form-item class="filter-actions">
           <el-button :icon="Search" type="primary" @click="search">查询</el-button>
           <el-button @click="reset">重置</el-button>
+          <el-button-group><el-button :type="viewMode === 'cards' ? 'primary' : 'default'" :icon="Grid" @click="viewMode = 'cards'">卡片</el-button><el-button :type="viewMode === 'table' ? 'primary' : 'default'" :icon="List" @click="viewMode = 'table'">列表</el-button></el-button-group>
         </el-form-item>
       </el-form>
     </section>
 
-    <section class="panel data-panel">
-      <el-table v-loading="loading" :data="rows" empty-text="尚未从附件归纳出产品要素">
+    <section v-if="viewMode === 'cards'" v-loading="loading" class="product-card-grid">
+      <article v-for="row in visibleRows" :key="row.id" class="product-ledger-card" :class="`is-${productStatus(row.id)?.status ?? 'pending'}`" @click="showDetail(row.id)">
+        <header>
+          <div><small>{{ row.strategy_category || '策略待补充' }}</small><h2>{{ row.product_name }}</h2><span class="numeric">{{ row.product_code }}</span></div>
+          <el-tag :type="statusType(productStatus(row.id)?.status)" effect="plain">{{ statusLabel(productStatus(row.id)?.status) }}</el-tag>
+        </header>
+        <div class="product-card-meta"><span><small>管理人</small><strong>{{ row.manager_name || '—' }}</strong></span><span><small>托管/外包</small><strong>{{ row.custodian_name || '—' }}</strong></span></div>
+        <div class="share-summary">
+          <div class="share-summary__head"><span>{{ statusDate }} 份额更新</span><strong>{{ productStatus(row.id)?.updated_share_count ?? 0 }} / {{ productStatus(row.id)?.expected_share_count ?? row.share_count }}</strong></div>
+          <div class="share-tags">
+            <el-tooltip v-for="share in expectedShares(productStatus(row.id))" :key="share.code" :content="share.code">
+              <span :class="share.updated ? 'is-updated' : 'is-missing'">{{ share.label }}<i>{{ share.updated ? '✓' : '待' }}</i></span>
+            </el-tooltip>
+            <span v-if="!expectedShares(productStatus(row.id)).length" class="is-missing">待获取份额<i>待</i></span>
+          </div>
+        </div>
+        <footer><span><small>最新净值</small><strong class="numeric">{{ row.unit_nav ?? (row.share_count > 1 ? '多份额' : '—') }}</strong></span><span><small>最近更新</small><strong class="numeric">{{ productStatus(row.id)?.latest_update_date || '—' }}</strong></span><el-button text type="primary" :icon="View">查看详情</el-button></footer>
+      </article>
+      <el-empty v-if="!visibleRows.length" description="当前条件下没有产品" />
+    </section>
+
+    <section v-else class="panel data-panel">
+      <el-table v-loading="loading" :data="visibleRows" empty-text="尚未从附件归纳出产品要素">
         <el-table-column label="产品主体" min-width="260">
           <template #default="{ row }"><strong class="table-primary">{{ row.product_name }}</strong><small class="cell-secondary numeric">{{ row.product_code }}</small></template>
         </el-table-column>
         <el-table-column label="最新估值日" width="122"><template #default="{ row }"><span class="numeric">{{ row.latest_source_date ?? '—' }}</span></template></el-table-column>
         <el-table-column label="份额" width="76" align="center"><template #default="{ row }"><el-tag size="small" type="info">{{ row.share_count }}</el-tag></template></el-table-column>
+        <el-table-column label="更新状态" width="110"><template #default="{ row }"><el-tag :type="statusType(productStatus(row.id)?.status)">{{ statusLabel(productStatus(row.id)?.status) }}</el-tag></template></el-table-column>
         <el-table-column label="单位 / 累计净值" width="150" align="right"><template #default="{ row }"><strong class="numeric">{{ row.unit_nav ?? '多份额' }}</strong><small class="cell-secondary numeric">{{ row.total_nav ?? '—' }}</small></template></el-table-column>
         <el-table-column label="资产净值" width="160" align="right"><template #default="{ row }"><span class="numeric">{{ formatMoney(row.asset_value) }}</span></template></el-table-column>
         <el-table-column label="实收资本" width="160" align="right"><template #default="{ row }"><span class="numeric">{{ formatMoney(row.paid_in_capital) }}</span></template></el-table-column>
@@ -189,6 +280,7 @@ onMounted(() => {
       </el-table>
       <div class="pagination-wrap"><el-pagination v-model:current-page="filters.page" v-model:page-size="filters.pageSize" :total="total" :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next" @current-change="loadRows" /></div>
     </section>
+    <div v-if="viewMode === 'cards'" class="pagination-wrap card-pagination"><el-pagination v-model:current-page="filters.page" v-model:page-size="filters.pageSize" :total="total" :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next" @current-change="loadRows" /></div>
 
     <el-drawer v-model="detailVisible" size="min(980px, 92vw)" destroy-on-close>
       <template #header>
@@ -246,28 +338,70 @@ onMounted(() => {
       </el-form>
       <template #footer><el-button @click="editVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveProfile">保存并留痕</el-button></template>
     </el-dialog>
+    </template>
+    <FundNavView v-else embedded />
   </div>
 </template>
 
 <style scoped>
+.product-center-tabs { width: fit-content; margin: -8px 0 22px; padding: 4px; display: flex; gap: 3px; border: 1px solid #e2dbd2; border-radius: 11px; background: #eee8df; }
+.product-center-tabs button { min-width: 104px; padding: 9px 18px; border: 0; border-radius: 8px; color: #77736c; background: transparent; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; transition: color .18s ease, background .18s ease, box-shadow .18s ease; }
+.product-center-tabs button:hover { color: #292724; }
+.product-center-tabs button.active { color: #fff; background: #181715; box-shadow: 0 3px 10px rgba(24,23,21,.16); }
 .product-metrics { margin-bottom: 20px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
-.product-metric { min-height: 122px; padding: 20px; display: grid; align-content: center; gap: 7px; border: 1px solid var(--line); border-radius: 16px; background: #fff; box-shadow: 0 8px 28px rgba(28,60,72,.04); }
+.product-metric { min-height: 122px; padding: 20px; display: grid; align-content: center; gap: 7px; border: 1px solid var(--line); border-radius: 12px; background: #efe9de; }
 .product-metric small { color: #6f828a; font-weight: 700; }
 .product-metric strong { color: var(--navy-800); font-size: 28px; }
 .product-metric strong.money-value { font-size: 20px; }
 .product-metric span { color: #93a1a6; font-size: 10px; }
+.product-metric:nth-child(2) { color: #faf9f5; background: #181715; border-color: #181715; }
+.product-metric:nth-child(2) small,.product-metric:nth-child(2) strong,.product-metric:nth-child(2) span { color: #faf9f5; }
+.product-metric:nth-child(4) { color: #fff; background: #cc785c; border-color: #cc785c; }
+.product-metric:nth-child(4) small,.product-metric:nth-child(4) strong,.product-metric:nth-child(4) span { color: #fff; }
 .product-detail { min-height: 360px; }
+.product-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.product-ledger-card { min-width: 0; padding: 18px; display: grid; gap: 16px; border: 1px solid #e6dfd8; border-top: 4px solid #5db872; border-radius: 12px; background: #fffefa; cursor: pointer; transition: transform .2s ease, box-shadow .2s ease; }
+.product-ledger-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(45,35,28,.08); }
+.product-ledger-card.is-partial { border-top-color: #d4a017; }
+.product-ledger-card.is-pending { border-top-color: #c64545; }
+.product-ledger-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.product-ledger-card > header > div { min-width: 0; flex: 1; }
+.product-ledger-card > header .el-tag { flex: 0 0 auto; }
+.product-ledger-card > header small { color: #cc785c; font-size: 10px; letter-spacing: .08em; }
+.product-ledger-card h2 { min-height: 52px; margin: 5px 0 4px; display: -webkit-box; overflow: hidden; color: #141413; font-family: Georgia, "Times New Roman", serif; font-size: 21px; font-weight: 400; line-height: 1.25; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.product-ledger-card > header span { color: #8e8b82; font-size: 10px; }
+.product-card-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.product-card-meta > span { min-width: 0; padding: 10px; display: grid; gap: 4px; border-radius: 8px; background: #f5f0e8; }
+.product-card-meta small,.product-ledger-card footer small { color: #8e8b82; font-size: 9px; }
+.product-card-meta strong { overflow: hidden; color: #3d3d3a; font-size: 11px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.share-summary { min-width: 0; max-width: 100%; padding: 12px; overflow: hidden; border-radius: 9px; background: #181715; color: #faf9f5; }
+.share-summary__head { margin-bottom: 10px; display: flex; justify-content: space-between; color: #a09d96; font-size: 10px; }
+.share-summary__head span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-summary__head strong { flex: 0 0 auto; margin-left: 8px; }
+.share-summary__head strong { color: #faf9f5; font-size: 12px; }
+.share-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.share-tags > span { padding: 5px 7px; display: inline-flex; align-items: center; gap: 5px; border-radius: 6px; background: #252320; color: #d4d0c9; font-size: 10px; }
+.share-tags > span i { font-style: normal; color: #78c48a; }
+.share-tags > span.is-missing { background: #3a2422; color: #f2c7c4; }
+.share-tags > span.is-missing i { color: #e18b85; }
+.product-ledger-card footer { min-width: 0; display: grid; grid-template-columns: minmax(84px, 1fr) minmax(100px, 1fr) auto; align-items: end; gap: 12px; }
+.product-ledger-card footer > span { min-width: 0; display: grid; gap: 3px; }
+.product-ledger-card footer strong { color: #252523; font-size: 12px; font-weight: 500; }
+.product-ledger-card footer .el-button { min-width: 0; margin-left: 0; padding-right: 4px; padding-left: 4px; }
+.card-pagination { margin-top: 14px; border: 1px solid #e6dfd8; border-radius: 10px; background: #fffefa; }
 .profile-section, .snapshot-section { margin-bottom: 24px; }
 .profile-section__header, .snapshot-section__header { margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; }
 .profile-section h3, .snapshot-section h3 { margin: 0; color: var(--ink-900); font-size: 16px; }
 .profile-section__header p, .snapshot-section__header span { margin: 4px 0 0; color: #87969d; font-size: 11px; }
 .profile-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.profile-grid article { padding: 16px; border: 1px solid #e1eae9; border-radius: 12px; background: #f8fbfa; }
+.profile-grid article { padding: 16px; border: 1px solid #e6dfd8; border-radius: 12px; background: #f5f0e8; }
 .profile-grid header { display: flex; justify-content: space-between; gap: 10px; }
 .profile-grid p { min-height: 90px; margin: 13px 0 4px; color: #526971; font-size: 12px; line-height: 1.75; white-space: pre-wrap; }
 .field-completeness { margin-bottom: 12px; padding: 10px 13px; border-radius: 8px; color: #557078; background: #eef7f5; font-size: 11px; }
 .platform-link { display: inline-flex; align-items: center; gap: 5px; color: var(--el-color-primary); text-decoration: none; }
 .field-hint { margin-top: 5px; color: #87969d; font-size: 11px; }
+@media (max-width: 1180px) { .product-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 900px) { .product-metrics, .profile-grid { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 620px) { .product-metrics, .profile-grid { grid-template-columns: 1fr; } }
+@media (max-width: 620px) { .product-metrics, .profile-grid, .product-card-grid { grid-template-columns: 1fr; } }
+@media (max-width: 420px) { .product-ledger-card footer { grid-template-columns: 1fr 1fr; } .product-ledger-card footer .el-button { grid-column: 1 / -1; justify-self: start; } }
 </style>
