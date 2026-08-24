@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { EditPen, RefreshRight, Search, View } from '@element-plus/icons-vue'
+import { EditPen, Link, RefreshRight, Search, View } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/platform/api/http'
@@ -22,6 +23,7 @@ import type {
 } from '../api/types'
 
 const auth = useAuthStore()
+const route = useRoute()
 const loading = ref(false)
 const detailLoading = ref(false)
 const saving = ref(false)
@@ -32,7 +34,7 @@ const detail = ref<FundProductDetail>()
 const detailVisible = ref(false)
 const editVisible = ref(false)
 const filters = reactive({ keyword: '', page: 1, pageSize: 20 })
-const profileForm = reactive({ manager: '', strategy: '' })
+const profileForm = reactive({ manager: '', strategy: '', platformUrl: '' })
 const canEdit = computed(() => auth.user?.is_platform_admin || auth.user?.role !== 'viewer')
 
 function formatMoney(value: string | null | undefined) {
@@ -85,6 +87,7 @@ function openEdit() {
   if (!detail.value) return
   profileForm.manager = detail.value.investment_manager_info ?? ''
   profileForm.strategy = detail.value.investment_strategy_info ?? ''
+  profileForm.platformUrl = detail.value.custodian_platform_url ?? ''
   editVisible.value = true
 }
 
@@ -95,6 +98,7 @@ async function saveProfile() {
     detail.value = await updateFundProductProfile(detail.value.id, {
       investment_manager_info: profileForm.manager,
       investment_strategy_info: profileForm.strategy,
+      custodian_platform_url: profileForm.platformUrl.trim() || null,
     })
     editVisible.value = false
     ElMessage.success('产品说明已保存并写入审计日志')
@@ -130,7 +134,12 @@ function snapshotLabel(item: FundProductSnapshot) {
 }
 
 watch(() => filters.pageSize, search)
-onMounted(() => { void loadRows(); void loadSummary() })
+onMounted(() => {
+  void loadRows()
+  void loadSummary()
+  const productId = Number(route.query.product)
+  if (Number.isInteger(productId) && productId > 0) void showDetail(productId)
+})
 </script>
 
 <template>
@@ -193,6 +202,17 @@ onMounted(() => { void loadRows(); void loadSummary() })
               <article><header><strong>投资经理信息</strong><el-tag size="small" :type="detail.investment_manager_manual ? 'warning' : 'info'">{{ detail.investment_manager_manual ? '人工维护' : '附件来源' }}</el-tag></header><p>{{ text(detail.investment_manager_info) }}</p><el-button v-if="canEdit && detail.investment_manager_manual" text type="primary" :icon="RefreshRight" :loading="saving" @click="restoreSource('manager')">恢复附件来源</el-button></article>
               <article><header><strong>投资策略信息</strong><el-tag size="small" :type="detail.investment_strategy_manual ? 'warning' : 'info'">{{ detail.investment_strategy_manual ? '人工维护' : '附件来源' }}</el-tag></header><p>{{ text(detail.investment_strategy_info) }}</p><el-button v-if="canEdit && detail.investment_strategy_manual" text type="primary" :icon="RefreshRight" :loading="saving" @click="restoreSource('strategy')">恢复附件来源</el-button></article>
             </div>
+            <el-descriptions :column="3" border size="small" style="margin-top: 14px">
+              <el-descriptions-item label="成立日期">{{ text(detail.inception_date) }}</el-descriptions-item>
+              <el-descriptions-item label="策略分类">{{ text(detail.strategy_category) }}</el-descriptions-item>
+              <el-descriptions-item label="风险等级">{{ text(detail.risk_level) }}</el-descriptions-item>
+              <el-descriptions-item label="管理人">{{ text(detail.manager_name) }}</el-descriptions-item>
+              <el-descriptions-item label="托管/外包机构">{{ text(detail.custodian_name) }}</el-descriptions-item>
+              <el-descriptions-item label="托管平台">
+                <a v-if="detail.custodian_platform_url" class="platform-link" :href="detail.custodian_platform_url" target="_blank" rel="noopener noreferrer"><el-icon><Link /></el-icon>打开托管平台</a>
+                <span v-else>未配置</span>
+              </el-descriptions-item>
+            </el-descriptions>
           </section>
 
           <section class="snapshot-section">
@@ -222,6 +242,7 @@ onMounted(() => { void loadRows(); void loadSummary() })
       <el-form label-position="top">
         <el-form-item label="投资经理信息"><el-input v-model="profileForm.manager" type="textarea" :rows="6" maxlength="20000" show-word-limit /></el-form-item>
         <el-form-item label="投资策略信息"><el-input v-model="profileForm.strategy" type="textarea" :rows="6" maxlength="20000" show-word-limit /></el-form-item>
+        <el-form-item label="托管平台链接"><el-input v-model="profileForm.platformUrl" maxlength="2000" placeholder="https://托管平台地址" /><small class="field-hint">仅支持 http:// 或 https://，首页和产品台账将以新窗口打开。</small></el-form-item>
       </el-form>
       <template #footer><el-button @click="editVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveProfile">保存并留痕</el-button></template>
     </el-dialog>
@@ -245,6 +266,8 @@ onMounted(() => { void loadRows(); void loadSummary() })
 .profile-grid header { display: flex; justify-content: space-between; gap: 10px; }
 .profile-grid p { min-height: 90px; margin: 13px 0 4px; color: #526971; font-size: 12px; line-height: 1.75; white-space: pre-wrap; }
 .field-completeness { margin-bottom: 12px; padding: 10px 13px; border-radius: 8px; color: #557078; background: #eef7f5; font-size: 11px; }
+.platform-link { display: inline-flex; align-items: center; gap: 5px; color: var(--el-color-primary); text-decoration: none; }
+.field-hint { margin-top: 5px; color: #87969d; font-size: 11px; }
 @media (max-width: 900px) { .product-metrics, .profile-grid { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 620px) { .product-metrics, .profile-grid { grid-template-columns: 1fr; } }
 </style>

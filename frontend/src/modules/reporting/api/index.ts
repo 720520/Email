@@ -7,6 +7,7 @@ import type {
   ProductReportFieldValue,
   OnlyOfficeSession,
   ReportDefinition,
+  ReportDesignMetadata,
   ReportDefinitionPayload,
   ReportBatch,
   ReportBatchItem,
@@ -15,6 +16,7 @@ import type {
   ReportPreview,
   ReportProductFields,
   ReportRun,
+  ReportLayoutPlacement,
   ReportTemplateItem,
   ResolvedDynamicField,
 } from './types'
@@ -95,6 +97,17 @@ export async function validateReportTemplate(templateId: number) {
 export async function publishReportTemplate(templateId: number) {
   return (
     await http.post<ReportTemplateItem>(`/reports/templates/${templateId}/publish`)
+  ).data
+}
+
+export async function confirmReportRunAsTemplate(
+  runId: number,
+  payload: { name: string; description?: string },
+) {
+  return (
+    await http.post<ReportTemplateItem>(`/reports/runs/${runId}/confirm-template`, payload, {
+      timeout: 180_000,
+    })
   ).data
 }
 
@@ -212,4 +225,14 @@ export async function createOnlyOfficeSession(runId: number) {
   return (
     await http.post<OnlyOfficeSession>(`/reports/runs/${runId}/onlyoffice/session`)
   ).data
+}
+
+export async function getReportDesignMetadata(runId: number) {
+  return (await http.get<ReportDesignMetadata>(`/reports/runs/${runId}/design-metadata`)).data
+}
+
+export async function updateReportLayout(runId: number, placements: ReportLayoutPlacement[]) {
+  return (await http.post<ReportRun>(`/reports/runs/${runId}/layout`, { placements }, {
+    timeout: 180_000,
+  })).data
 }

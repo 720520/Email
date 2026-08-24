@@ -21,6 +21,7 @@ const loading = ref(false)
 const errorMessage = ref('')
 const editorMode = ref<'edit' | 'view'>('view')
 const runId = Number(route.params.runId)
+const embedded = route.query.embedded === '1'
 let editor: EditorInstance | undefined
 let loadedScript: HTMLScriptElement | undefined
 
@@ -89,8 +90,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="editor-page">
-    <header class="editor-toolbar">
+  <div class="editor-page" :class="{ 'editor-page--embedded': embedded }">
+    <header v-if="!embedded" class="editor-toolbar">
       <div class="editor-toolbar__title">
         <el-button text :icon="ArrowLeft" @click="router.push('/reports')">返回报表中心</el-button>
         <span class="editor-toolbar__divider" />
@@ -124,6 +125,7 @@ onUnmounted(() => {
   min-height: 0;
   background: #eef3f3;
 }
+.editor-page--embedded { position: absolute; }
 .editor-toolbar {
   flex: 0 0 58px;
   display: flex;

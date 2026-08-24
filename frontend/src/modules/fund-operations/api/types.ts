@@ -226,6 +226,30 @@ export interface FundProductSummary {
   missing_strategy_count: number
 }
 
+export type FundProductNavUpdateStatus = 'updated' | 'partial' | 'pending'
+
+export interface FundProductNavUpdateItem {
+  product_id: number
+  product_code: string
+  product_name: string
+  nav_date: string
+  status: FundProductNavUpdateStatus
+  updated_share_count: number
+  expected_share_count: number
+  updated_share_codes: string[]
+  missing_share_codes: string[]
+  latest_update_date: string | null
+}
+
+export interface FundProductNavUpdateSummary {
+  nav_date: string
+  total_count: number
+  updated_count: number
+  partial_count: number
+  pending_count: number
+  items: FundProductNavUpdateItem[]
+}
+
 export interface FundProductItem {
   id: number
   product_code: string
@@ -242,6 +266,12 @@ export interface FundProductItem {
   investment_manager_manual: boolean
   investment_strategy_manual: boolean
   latest_source_file: string | null
+  inception_date: string | null
+  strategy_category: string | null
+  manager_name: string | null
+  custodian_name: string | null
+  risk_level: string | null
+  custodian_platform_url: string | null
 }
 
 export interface FundProductSnapshot {
@@ -291,6 +321,7 @@ export interface FundProductProfilePayload {
   investment_strategy_info?: string | null
   restore_investment_manager_from_source?: boolean
   restore_investment_strategy_from_source?: boolean
+  custodian_platform_url?: string | null
 }
 
 export interface ExceptionItem {

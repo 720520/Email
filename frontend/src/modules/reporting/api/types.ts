@@ -122,6 +122,26 @@ export interface OnlyOfficeSession {
   config: Record<string, unknown>
 }
 
+export interface ReportLayoutPlacement {
+  id: string
+  token: string
+  slide: number
+  x: number
+  y: number
+  width: number
+  height: number
+  font_size: number
+  bold: boolean
+  color: string
+}
+
+export interface ReportDesignMetadata {
+  slide_count: number
+  slide_width: number
+  slide_height: number
+  placements: ReportLayoutPlacement[]
+}
+
 export interface ContractUploadResult {
   document_id: number
   original_name: string

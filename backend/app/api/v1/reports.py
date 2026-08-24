@@ -13,6 +13,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pptx import Presentation
+from pptx.dml.color import RGBColor
+from pptx.util import Pt
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -30,11 +32,15 @@ from app.api.schemas.reporting import (
     ReportFileVersionItem,
     ReportGenerateRequest,
     ReportGenerateResponse,
+    ReportDesignMetadata,
+    ReportLayoutPlacement,
+    ReportLayoutUpdate,
     ReportPreviewRequest,
     ReportPreviewResponse,
     ReportProductFieldsResponse,
     ReportRunItem,
     ReportTemplateItem,
+    ReportTemplateFromRunRequest,
 )
 from app.core.config import get_settings
 from app.core.credential_security import audit_signing_key
@@ -349,6 +355,229 @@ def publish_report_template(
     )
     session.commit()
     return _template_item_from_version(template, version)
+
+
+@router.post(
+    "/runs/{run_id}/confirm-template",
+    response_model=ReportTemplateItem,
+    status_code=201,
+)
+def confirm_run_as_report_template(
+    run_id: int,
+    payload: ReportTemplateFromRunRequest,
+    request: Request,
+    session: TenantDatabaseSession,
+    scope: OperatorScope,
+) -> ReportTemplateItem:
+    """把 OnlyOffice 中已保存的样板报表固化为可批量复用的已发布模板。"""
+
+    run = session.get(ReportRun, run_id)
+    if run is None or run.status != "success" or run.current_version_id is None:
+        raise AppError("REPORT_OUTPUT_NOT_FOUND", "样板 PPTX 文件不存在", status_code=404)
+    version = session.get(ReportFileVersion, run.current_version_id)
+    if version is None:
+        raise AppError("REPORT_OUTPUT_NOT_FOUND", "样板 PPTX 文件版本不存在", status_code=404)
+    name = payload.name.strip()
+    if session.scalar(select(ReportTemplate.id).where(ReportTemplate.name == name)):
+        raise AppError("REPORT_TEMPLATE_NAME_EXISTS", "当前租户已存在同名模板", status_code=409)
+
+    source_path = _safe_data_path(version.stored_path)
+    if not source_path.is_file():
+        raise AppError("REPORT_OUTPUT_NOT_FOUND", "样板 PPTX 文件已丢失", status_code=404)
+    inspection = _template_inspector.inspect_path(source_path, session)
+    if not inspection.tokens:
+        raise AppError(
+            "REPORT_TEMPLATE_PLACEHOLDER_REQUIRED",
+            "模板至少需要一个字段或组件占位符，请在 PPTX 文本框中插入 {{字段键}}",
+            status_code=409,
+        )
+    if not inspection.is_valid:
+        raise AppError(
+            "REPORT_TEMPLATE_VALIDATION_FAILED",
+            "模板占位符校验失败，请修复后再确认",
+            status_code=409,
+        )
+
+    settings = get_settings()
+    content = source_path.read_bytes()
+    safe_name = sanitize_filename(f"{name}.pptx")
+    relative_path = (
+        Path("tenants")
+        / str(scope.tenant_id)
+        / "reporting"
+        / "templates"
+        / f"{uuid.uuid4().hex}_{safe_name}"
+    )
+    atomic_write_bytes(settings.data_directory / relative_path, content)
+    digest = content_sha256(content)
+    template = ReportTemplate(
+        tenant_id=scope.tenant_id,
+        name=name,
+        description=payload.description.strip() if payload.description else None,
+        original_name=safe_name,
+        stored_path=relative_path.as_posix(),
+        content_hash=digest,
+        is_active=True,
+        created_by_user_id=scope.user.id,
+    )
+    session.add(template)
+    session.flush()
+    template_version = ReportTemplateVersion(
+        tenant_id=scope.tenant_id,
+        template_id=template.id,
+        version=1,
+        status="published",
+        original_name=safe_name,
+        stored_path=relative_path.as_posix(),
+        content_hash=digest,
+        required_fields=list(inspection.required_fields),
+        required_components=list(inspection.required_components),
+        validation_errors=[],
+        published_at=utc_now(),
+        created_by_user_id=scope.user.id,
+        published_by_user_id=scope.user.id,
+    )
+    session.add(template_version)
+    session.flush()
+    _audit(
+        session,
+        request,
+        scope,
+        action="report_template.confirm_from_run",
+        resource_type="report_template",
+        resource_id=template.id,
+        detail={
+            "source_run_id": run.id,
+            "source_file_version_id": version.id,
+            "version_id": template_version.id,
+            "required_fields": template_version.required_fields,
+            "required_components": template_version.required_components,
+            "sha256": digest,
+        },
+    )
+    session.commit()
+    return _template_item_from_version(template, template_version)
+
+
+@router.get("/runs/{run_id}/design-metadata", response_model=ReportDesignMetadata)
+def get_report_design_metadata(
+    run_id: int,
+    session: TenantDatabaseSession,
+    scope: OperatorScope,
+) -> ReportDesignMetadata:
+    del scope
+    run, version, path = _editable_report_output(session, run_id)
+    presentation = Presentation(str(path))
+    placements: list[ReportLayoutPlacement] = []
+    for slide_number, slide in enumerate(presentation.slides, start=1):
+        for shape in slide.shapes:
+            if not shape.name.startswith("codex-field:") or not getattr(shape, "has_text_frame", False):
+                continue
+            placement_id = shape.name.removeprefix("codex-field:")
+            placements.append(
+                ReportLayoutPlacement(
+                    id=placement_id,
+                    token=shape.text.strip(),
+                    slide=slide_number,
+                    x=shape.left / presentation.slide_width,
+                    y=shape.top / presentation.slide_height,
+                    width=shape.width / presentation.slide_width,
+                    height=shape.height / presentation.slide_height,
+                )
+            )
+    return ReportDesignMetadata(
+        slide_count=len(presentation.slides),
+        slide_width=presentation.slide_width,
+        slide_height=presentation.slide_height,
+        placements=placements,
+    )
+
+
+@router.post("/runs/{run_id}/layout", response_model=ReportRunItem)
+def update_report_layout(
+    run_id: int,
+    payload: ReportLayoutUpdate,
+    request: Request,
+    session: TenantDatabaseSession,
+    scope: OperatorScope,
+) -> ReportRunItem:
+    """按归一化坐标把字段占位符写入 PPTX，并追加不可变文件版本。"""
+
+    run, current, path = _editable_report_output(session, run_id)
+    presentation = Presentation(str(path))
+    for slide in presentation.slides:
+        for shape in list(slide.shapes):
+            if shape.name.startswith("codex-field:"):
+                shape._element.getparent().remove(shape._element)  # noqa: SLF001
+    for item in payload.placements:
+        if item.slide > len(presentation.slides):
+            raise AppError("REPORT_LAYOUT_SLIDE_INVALID", "字段绑定的幻灯片页码不存在")
+        slide = presentation.slides[item.slide - 1]
+        textbox = slide.shapes.add_textbox(
+            int(item.x * presentation.slide_width),
+            int(item.y * presentation.slide_height),
+            int(item.width * presentation.slide_width),
+            int(item.height * presentation.slide_height),
+        )
+        textbox.name = f"codex-field:{item.id}"
+        textbox.text_frame.clear()
+        paragraph = textbox.text_frame.paragraphs[0]
+        run_text = paragraph.add_run()
+        run_text.text = item.token
+        run_text.font.size = Pt(item.font_size)
+        run_text.font.bold = item.bold
+        run_text.font.color.rgb = RGBColor.from_string(item.color.removeprefix("#"))
+
+    output = io.BytesIO()
+    presentation.save(output)
+    content = output.getvalue()
+    next_version = (
+        session.scalar(
+            select(func.max(ReportFileVersion.version)).where(
+                ReportFileVersion.report_run_id == run.id
+            )
+        )
+        or 0
+    ) + 1
+    filename = run.output_filename or current.filename
+    relative_path = (
+        Path("tenants")
+        / str(scope.tenant_id)
+        / "reporting"
+        / "exports"
+        / f"{run.report_date.year:04d}"
+        / f"{run.report_date.month:02d}"
+        / str(run.id)
+        / f"v{next_version}_{uuid.uuid4().hex[:8]}_{sanitize_filename(filename)}"
+    )
+    atomic_write_bytes(get_settings().data_directory / relative_path, content)
+    version = ReportFileVersion(
+        tenant_id=scope.tenant_id,
+        report_run_id=run.id,
+        version=next_version,
+        source="designer",
+        filename=filename,
+        stored_path=relative_path.as_posix(),
+        content_hash=content_sha256(content),
+        file_size=len(content),
+        created_by_user_id=scope.user.id,
+    )
+    session.add(version)
+    session.flush()
+    run.current_version_id = version.id
+    run.output_path = version.stored_path
+    _audit(
+        session,
+        request,
+        scope,
+        action="report.layout.update",
+        resource_type="report_file_version",
+        resource_id=version.id,
+        detail={"run_id": run.id, "version": next_version, "placements": len(payload.placements)},
+    )
+    session.commit()
+    product = session.get(FundProduct, run.fund_product_id)
+    return _run_item(run, product.product_name if product else str(run.fund_product_id), session)
 
 
 @router.get("/product-fields/{product_id}", response_model=ReportProductFieldsResponse)
@@ -1413,6 +1642,21 @@ def _safe_data_path(relative_path: str) -> Path:
     if path != root and root not in path.parents:
         raise AppError("REPORT_PATH_INVALID", "报表文件路径无效")
     return path
+
+
+def _editable_report_output(
+    session: Session, run_id: int
+) -> tuple[ReportRun, ReportFileVersion, Path]:
+    run = session.get(ReportRun, run_id)
+    if run is None or run.status != "success" or run.current_version_id is None:
+        raise AppError("REPORT_OUTPUT_NOT_FOUND", "PPTX 样板不存在", status_code=404)
+    version = session.get(ReportFileVersion, run.current_version_id)
+    if version is None:
+        raise AppError("REPORT_OUTPUT_NOT_FOUND", "PPTX 样板版本不存在", status_code=404)
+    path = _safe_data_path(version.stored_path)
+    if not path.is_file():
+        raise AppError("REPORT_OUTPUT_NOT_FOUND", "PPTX 样板文件已丢失", status_code=404)
+    return run, version, path
 
 
 def _validated_sections(sections: list[str]) -> list[str]:

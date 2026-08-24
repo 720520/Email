@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 from typing import Annotated, Any
 
@@ -14,6 +15,8 @@ from app.api.schemas.common import PageResponse
 from app.api.schemas.fund_product import (
     FundProductDetail,
     FundProductListItem,
+    FundProductNavUpdateItem,
+    FundProductNavUpdateSummary,
     FundProductProfileUpdate,
     FundProductSnapshotItem,
     FundProductSummary,
@@ -80,6 +83,71 @@ def product_summary(
         latest_asset_value=_decimal_text(asset_value) if has_asset_value else None,
         missing_manager_count=sum(not item.investment_manager_info for item in products),
         missing_strategy_count=sum(not item.investment_strategy_info for item in products),
+    )
+
+
+@router.get("/nav-update-status", response_model=FundProductNavUpdateSummary)
+def nav_update_status(
+    session: TenantDatabaseSession,
+    scope: TenantScope,
+    nav_date: date = Query(),
+) -> FundProductNavUpdateSummary:
+    del scope
+    products = list(
+        session.scalars(
+            select(FundProduct)
+            .where(_visible_product())
+            .order_by(FundProduct.product_name, FundProduct.product_code)
+        )
+    )
+    items: list[FundProductNavUpdateItem] = []
+    for product in products:
+        latest_date = session.scalar(
+            select(func.max(FundNav.nav_date)).where(
+                FundNav.master_product_code == product.product_code
+            )
+        )
+        expected_rows = _reference_rows(session, product.product_code, nav_date)
+        expected_codes = {
+            row.product_code for row in expected_rows if row.product_code
+        } or {product.product_code}
+        updated_rows = list(
+            session.scalars(
+                select(FundNav).where(
+                    FundNav.master_product_code == product.product_code,
+                    FundNav.nav_date == nav_date,
+                )
+            )
+        )
+        updated_codes = {row.product_code for row in updated_rows if row.product_code}
+        missing_codes = expected_codes - updated_codes
+        if not updated_codes:
+            status = "pending"
+        elif missing_codes:
+            status = "partial"
+        else:
+            status = "updated"
+        items.append(
+            FundProductNavUpdateItem(
+                product_id=product.id,
+                product_code=product.product_code,
+                product_name=product.product_name,
+                nav_date=nav_date,
+                status=status,
+                updated_share_count=len(updated_codes),
+                expected_share_count=len(expected_codes),
+                updated_share_codes=sorted(updated_codes),
+                missing_share_codes=sorted(missing_codes),
+                latest_update_date=latest_date,
+            )
+        )
+    return FundProductNavUpdateSummary(
+        nav_date=nav_date,
+        total_count=len(items),
+        updated_count=sum(item.status == "updated" for item in items),
+        partial_count=sum(item.status == "partial" for item in items),
+        pending_count=sum(item.status == "pending" for item in items),
+        items=items,
     )
 
 
@@ -160,6 +228,15 @@ def update_fund_product_profile(
         product.investment_strategy_manual = True
         changed_fields.append("investment_strategy_info:manual")
 
+    if "custodian_platform_url" in payload.model_fields_set:
+        manual_profile = dict(product.manual_profile or {})
+        if payload.custodian_platform_url:
+            manual_profile["custodian_platform_url"] = payload.custodian_platform_url
+        else:
+            manual_profile.pop("custodian_platform_url", None)
+        product.manual_profile = manual_profile
+        changed_fields.append("custodian_platform_url:manual")
+
     AuditService(audit_signing_key(get_settings().security)).append(
         session,
         tenant_id=scope.tenant_id,
@@ -215,6 +292,37 @@ def _latest_rows(session: Session, master_product_code: str) -> list[FundNav]:
     )
 
 
+def _reference_rows(
+    session: Session, master_product_code: str, on_or_before: date
+) -> list[FundNav]:
+    reference_date = session.scalar(
+        select(func.max(FundNav.nav_date)).where(
+            FundNav.master_product_code == master_product_code,
+            FundNav.nav_date < on_or_before,
+        )
+    )
+    if reference_date is None:
+        current_rows = list(
+            session.scalars(
+                select(FundNav).where(
+                    FundNav.master_product_code == master_product_code,
+                    FundNav.nav_date == on_or_before,
+                )
+            )
+        )
+        return current_rows or _latest_rows(session, master_product_code)
+    return list(
+        session.scalars(
+            select(FundNav)
+            .where(
+                FundNav.master_product_code == master_product_code,
+                FundNav.nav_date == reference_date,
+            )
+            .order_by(FundNav.share_class, FundNav.product_code, FundNav.id)
+        )
+    )
+
+
 def _representative_row(rows: list[FundNav]) -> FundNav | None:
     if not rows:
         return None
@@ -233,6 +341,7 @@ def _representative_value(rows: list[FundNav], field: str) -> Decimal | None:
 def _list_item(session: Session, product: FundProduct) -> FundProductListItem:
     rows = _latest_rows(session, product.product_code)
     representative = _representative_row(rows)
+    profile = product.effective_profile()
     return FundProductListItem(
         id=product.id,
         product_code=product.product_code,
@@ -249,6 +358,12 @@ def _list_item(session: Session, product: FundProduct) -> FundProductListItem:
         investment_manager_manual=product.investment_manager_manual,
         investment_strategy_manual=product.investment_strategy_manual,
         latest_source_file=product.latest_source_file,
+        inception_date=_profile_text(profile, "inception_date"),
+        strategy_category=_profile_text(profile, "strategy_category"),
+        manager_name=_profile_text(profile, "manager_name"),
+        custodian_name=_profile_text(profile, "custodian_name"),
+        risk_level=_profile_text(profile, "risk_level"),
+        custodian_platform_url=_profile_text(profile, "custodian_platform_url"),
     )
 
 
@@ -313,3 +428,8 @@ def _clean_profile(value: str | None) -> str | None:
         return None
     cleaned = value.strip()
     return cleaned or None
+
+
+def _profile_text(profile: dict, key: str) -> str | None:
+    value = profile.get(key)
+    return str(value).strip() if value is not None and str(value).strip() else None

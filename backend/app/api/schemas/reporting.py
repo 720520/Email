@@ -23,6 +23,41 @@ class ReportTemplateItem(BaseModel):
     validation_errors: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class ReportTemplateFromRunRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=200)
+    description: str | None = Field(default=None, max_length=1000)
+
+
+class ReportLayoutPlacement(BaseModel):
+    id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    token: str = Field(min_length=3, max_length=300)
+    slide: int = Field(ge=1, le=200)
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    width: float = Field(gt=0, le=1)
+    height: float = Field(gt=0, le=1)
+    font_size: float = Field(default=18, ge=6, le=96)
+    bold: bool = False
+    color: str = Field(default="#173B4D", pattern=r"^#[0-9A-Fa-f]{6}$")
+
+    @model_validator(mode="after")
+    def stay_on_slide(self) -> "ReportLayoutPlacement":
+        if self.x + self.width > 1.000001 or self.y + self.height > 1.000001:
+            raise ValueError("字段区域不能超出幻灯片")
+        return self
+
+
+class ReportLayoutUpdate(BaseModel):
+    placements: list[ReportLayoutPlacement] = Field(max_length=300)
+
+
+class ReportDesignMetadata(BaseModel):
+    slide_count: int
+    slide_width: int
+    slide_height: int
+    placements: list[ReportLayoutPlacement] = Field(default_factory=list)
+
+
 class ReportProductField(BaseModel):
     key: str
     label: str

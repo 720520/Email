@@ -14,6 +14,7 @@ import type {
   FundHistory,
   FundNavPage,
   FundProductDetail,
+  FundProductNavUpdateSummary,
   FundProductPage,
   FundProductProfilePayload,
   FundProductSummary,
@@ -122,6 +123,14 @@ export async function getFundHistory(productCode: string) {
 
 export async function getFundProductSummary() {
   return (await http.get<FundProductSummary>('/fund-products/summary')).data
+}
+
+export async function getFundProductNavUpdateStatus(navDate: string) {
+  return (
+    await http.get<FundProductNavUpdateSummary>('/fund-products/nav-update-status', {
+      params: { nav_date: navDate },
+    })
+  ).data
 }
 
 export async function getFundProducts(params: AxiosRequestConfig['params']) {

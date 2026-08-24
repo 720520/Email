@@ -11,11 +11,13 @@ vi.mock('@/platform/api/http', () => ({ http }))
 
 import {
   cancelReportBatch,
+  confirmReportRunAsTemplate,
   createOnlyOfficeSession,
   createReportBatch,
   downloadReportBatch,
   getReportBatch,
   getReportBatchItems,
+  getReportDesignMetadata,
   createDynamicReportField,
   getDynamicReportFields,
   publishReportTemplate,
@@ -23,6 +25,7 @@ import {
   resolveDynamicReportFields,
   setProductReportFieldValue,
   updateDynamicReportField,
+  updateReportLayout,
   validateReportTemplate,
 } from './index'
 
@@ -85,6 +88,24 @@ describe('报表字段与模板 API', () => {
     expect(http.post).toHaveBeenNthCalledWith(2, '/reports/templates/9/publish')
   })
 
+  it('可把 OnlyOffice 样板运行确认成批量模板', async () => {
+    http.post.mockResolvedValueOnce({
+      data: { key: 'template-version:21', status: 'published', version: 1 },
+    })
+
+    const template = await confirmReportRunAsTemplate(18, {
+      name: '周报批量模板',
+      description: '已完成字段定位',
+    })
+
+    expect(template.key).toBe('template-version:21')
+    expect(http.post).toHaveBeenCalledWith(
+      '/reports/runs/18/confirm-template',
+      { name: '周报批量模板', description: '已完成字段定位' },
+      { timeout: 180_000 },
+    )
+  })
+
   it('批量任务支持创建、轮询、重试、取消和 ZIP 下载', async () => {
     const batch = { id: 12, status: 'pending' }
     http.post.mockResolvedValue({ data: batch })
@@ -121,5 +142,26 @@ describe('报表字段与模板 API', () => {
     })
     await createOnlyOfficeSession(18)
     expect(http.post).toHaveBeenCalledWith('/reports/runs/18/onlyoffice/session')
+  })
+
+  it('读取并保存拖拽布局坐标', async () => {
+    const metadata = { slide_count: 2, slide_width: 16, slide_height: 9, placements: [] }
+    http.get.mockResolvedValueOnce({ data: metadata })
+    http.post.mockResolvedValueOnce({ data: { id: 18, current_version: 2 } })
+    const placement = {
+      id: 'field1', token: '{{product_name}}', slide: 1,
+      x: 0.1, y: 0.2, width: 0.3, height: 0.1,
+      font_size: 18, bold: false, color: '#173B4D',
+    }
+
+    expect((await getReportDesignMetadata(18)).slide_count).toBe(2)
+    await updateReportLayout(18, [placement])
+
+    expect(http.get).toHaveBeenCalledWith('/reports/runs/18/design-metadata')
+    expect(http.post).toHaveBeenCalledWith(
+      '/reports/runs/18/layout',
+      { placements: [placement] },
+      { timeout: 180_000 },
+    )
   })
 })

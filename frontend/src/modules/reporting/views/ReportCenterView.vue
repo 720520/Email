@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { DocumentAdd, Download, EditPen, Plus, Refresh, UploadFilled, View } from '@element-plus/icons-vue'
+import { CopyDocument, DocumentAdd, Download, EditPen, Plus, Refresh, UploadFilled, View } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -13,12 +13,14 @@ import { useAuthStore } from '@/platform/auth/auth.store'
 
 import {
   cancelReportBatch,
+  confirmReportRunAsTemplate,
   createReportBatch,
   createReportDefinition,
   downloadReportBatch,
   downloadReport,
   generateReport,
   getReportDefinitions,
+  getReportDesignMetadata,
   getReportBatch,
   getReportBatchItems,
   getReportProductFields,
@@ -29,6 +31,7 @@ import {
   retryReportBatch,
   publishReportTemplate,
   updateReportProductField,
+  updateReportLayout,
   uploadProductContract,
   uploadReportTemplate,
   validateReportTemplate,
@@ -37,6 +40,7 @@ import type {
   ReportBatch,
   ReportBatchItem,
   ReportDefinition,
+  ReportLayoutPlacement,
   ReportPreview,
   ReportProductField,
   ReportRun,
@@ -47,6 +51,7 @@ const auth = useAuthStore()
 const router = useRouter()
 const loading = ref(false)
 const previewLoading = ref(false)
+const pptxPreviewLoading = ref(false)
 const generating = ref(false)
 const batchCreating = ref(false)
 const batch = ref<ReportBatch>()
@@ -59,6 +64,18 @@ const definitions = ref<ReportDefinition[]>([])
 const runs = ref<ReportRun[]>([])
 const fields = ref<ReportProductField[]>([])
 const preview = ref<ReportPreview>()
+const designRun = ref<ReportRun>()
+const confirmTemplateDialogVisible = ref(false)
+const designMode = ref<'layout' | 'office'>('layout')
+const currentSlide = ref(1)
+const slideCount = ref(1)
+const slideWidth = ref(16)
+const slideHeight = ref(9)
+const placements = ref<ReportLayoutPlacement[]>([])
+const selectedPlacementId = ref<string>()
+const layoutSaving = ref(false)
+const editorRevision = ref(0)
+let pptxPreviewTimer: number | undefined
 const contractInput = ref<HTMLInputElement>()
 const templateInput = ref<HTMLInputElement>()
 const templateFile = ref<File>()
@@ -85,6 +102,14 @@ const builder = reactive({
 })
 const fieldForm = reactive({ key: '', label: '', value: '', reason: '' })
 const templateForm = reactive({ name: '', description: '' })
+const confirmTemplateForm = reactive({ name: '', description: '' })
+
+const componentTokens = [
+  { label: '产品信息表', token: '{{table:product_info}}' },
+  { label: '收益指标表', token: '{{table:performance}}' },
+  { label: '净值曲线', token: '{{chart:nav_history}}' },
+]
+const selectedPlacement = computed(() => placements.value.find((item) => item.id === selectedPlacementId.value))
 
 const groupedFields = computed(() => {
   const result = new Map<string, ReportProductField[]>()
@@ -151,6 +176,7 @@ async function loadProductContext() {
     if (!builder.name) builder.name = `${product?.product_name ?? data.product_name}周报`
     if (!builder.reportDate && product?.latest_source_date) builder.reportDate = product.latest_source_date
     await refreshPreview()
+    schedulePptxPreview()
   } catch (error) {
     ElMessage.error(apiErrorMessage(error))
   }
@@ -170,6 +196,144 @@ async function refreshPreview() {
     ElMessage.error(apiErrorMessage(error))
   } finally {
     previewLoading.value = false
+  }
+}
+
+function schedulePptxPreview() {
+  if (!canEdit.value || !builder.productId) return
+  if (pptxPreviewTimer) window.clearTimeout(pptxPreviewTimer)
+  pptxPreviewTimer = window.setTimeout(() => void refreshPptxPreview(), 500)
+}
+
+async function refreshPptxPreview() {
+  if (!builder.productId || !builder.sections.length) return
+  pptxPreviewLoading.value = true
+  try {
+    const result = await generateReport({
+      fund_product_id: builder.productId,
+      template_key: builder.templateKey,
+      report_date: builder.reportDate || undefined,
+      sections: builder.sections,
+      settings: { design_preview: true },
+    })
+    designRun.value = result.run
+    const metadata = await getReportDesignMetadata(result.run.id)
+    slideCount.value = metadata.slide_count
+    slideWidth.value = metadata.slide_width
+    slideHeight.value = metadata.slide_height
+    currentSlide.value = Math.min(currentSlide.value, metadata.slide_count)
+    placements.value = metadata.placements
+    selectedPlacementId.value = undefined
+    editorRevision.value += 1
+    runs.value = [result.run, ...runs.value.filter((item) => item.id !== result.run.id)]
+  } catch (error) {
+    designRun.value = undefined
+    ElMessage.error(`PPTX 即时预览失败：${apiErrorMessage(error)}`)
+  } finally {
+    pptxPreviewLoading.value = false
+  }
+}
+
+function startTokenDrag(event: DragEvent, token: string) {
+  event.dataTransfer?.setData('text/report-token', token)
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy'
+}
+
+function dropToken(event: DragEvent) {
+  const token = event.dataTransfer?.getData('text/report-token')
+  const canvas = event.currentTarget as HTMLElement
+  if (!token || !canvas) return
+  const rect = canvas.getBoundingClientRect()
+  const width = 0.24
+  const height = 0.1
+  const x = Math.max(0, Math.min(1 - width, (event.clientX - rect.left) / rect.width - width / 2))
+  const y = Math.max(0, Math.min(1 - height, (event.clientY - rect.top) / rect.height - height / 2))
+  const item: ReportLayoutPlacement = {
+    id: crypto.randomUUID().replaceAll('-', '').slice(0, 20), token,
+    slide: currentSlide.value, x, y, width, height,
+    font_size: 18, bold: false, color: '#173B4D',
+  }
+  placements.value.push(item)
+  selectedPlacementId.value = item.id
+}
+
+function movePlacement(event: PointerEvent, item: ReportLayoutPlacement) {
+  const target = event.currentTarget as HTMLElement
+  const canvas = target.parentElement
+  if (!canvas) return
+  event.preventDefault()
+  selectedPlacementId.value = item.id
+  const rect = canvas.getBoundingClientRect()
+  const startX = event.clientX
+  const startY = event.clientY
+  const originalX = item.x
+  const originalY = item.y
+  const onMove = (next: PointerEvent) => {
+    item.x = Math.max(0, Math.min(1 - item.width, originalX + (next.clientX - startX) / rect.width))
+    item.y = Math.max(0, Math.min(1 - item.height, originalY + (next.clientY - startY) / rect.height))
+  }
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+  }
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+}
+
+function removeSelectedPlacement() {
+  if (!selectedPlacementId.value) return
+  placements.value = placements.value.filter((item) => item.id !== selectedPlacementId.value)
+  selectedPlacementId.value = undefined
+}
+
+async function saveLayout() {
+  if (!designRun.value) return
+  layoutSaving.value = true
+  try {
+    designRun.value = await updateReportLayout(designRun.value.id, placements.value)
+    editorRevision.value += 1
+    designMode.value = 'office'
+    ElMessage.success('字段坐标已写入 PPTX，可在 OnlyOffice 中继续精细调整')
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  } finally {
+    layoutSaving.value = false
+  }
+}
+
+async function copyPlaceholder(token: string) {
+  try {
+    await navigator.clipboard.writeText(token)
+    ElMessage.success(`已复制 ${token}，请粘贴到 PPTX 文本框中`)
+  } catch {
+    ElMessage.warning(`请手工复制：${token}`)
+  }
+}
+
+function openConfirmTemplateDialog() {
+  if (!designRun.value) return
+  const product = products.value.find((item) => item.id === builder.productId)
+  confirmTemplateForm.name = `${product?.product_name ?? '产品'}自定义模板`
+  confirmTemplateForm.description = '由报表中心即时预览确认，适用于批量产品生成'
+  confirmTemplateDialogVisible.value = true
+}
+
+async function confirmDesignTemplate() {
+  if (!designRun.value || !confirmTemplateForm.name.trim()) {
+    ElMessage.warning('请填写模板名称')
+    return
+  }
+  try {
+    const published = await confirmReportRunAsTemplate(designRun.value.id, {
+      name: confirmTemplateForm.name.trim(),
+      description: confirmTemplateForm.description.trim() || undefined,
+    })
+    templates.value = await getReportTemplates()
+    builder.templateKey = published.key
+    confirmTemplateDialogVisible.value = false
+    ElMessage.success(`模板 v${published.version} 已确认发布，可选择其他产品批量生成`)
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
   }
 }
 
@@ -458,9 +622,14 @@ function templateValidationMessage(item: ReportTemplateItem) {
 }
 
 watch(() => builder.productId, () => { void loadProductContext() })
+watch(() => builder.templateKey, schedulePptxPreview)
+watch(() => builder.sections, schedulePptxPreview, { deep: true })
 watch(() => builder.definitionId, applyDefinition)
 onMounted(async () => { await loadBaseData(); await loadProductContext() })
-onUnmounted(() => { if (batchPollTimer) window.clearInterval(batchPollTimer) })
+onUnmounted(() => {
+  if (batchPollTimer) window.clearInterval(batchPollTimer)
+  if (pptxPreviewTimer) window.clearTimeout(pptxPreviewTimer)
+})
 </script>
 
 <template>
@@ -493,7 +662,7 @@ onUnmounted(() => { if (batchPollTimer) window.clearInterval(batchPollTimer) })
                 </el-select>
               </el-form-item>
               <el-form-item label="报告日期">
-                <el-date-picker v-model="builder.reportDate" value-format="YYYY-MM-DD" type="date" placeholder="默认最新净值日" style="width: 100%" @change="refreshPreview" />
+                <el-date-picker v-model="builder.reportDate" value-format="YYYY-MM-DD" type="date" placeholder="默认最新净值日" style="width: 100%" @change="refreshPreview(); schedulePptxPreview()" />
               </el-form-item>
             </div>
             <el-form-item label="报表名称"><el-input v-model="builder.name" maxlength="200" /></el-form-item>
@@ -529,6 +698,82 @@ onUnmounted(() => { if (batchPollTimer) window.clearInterval(batchPollTimer) })
         </div>
         <el-empty v-else description="暂无可预览数据" />
       </article>
+    </section>
+
+    <section v-if="canEdit" class="panel design-panel" v-loading="pptxPreviewLoading">
+      <div class="panel-header">
+        <div>
+          <h2>PPTX 即时预览与字段定位</h2>
+          <p>切换产品后自动生成样板；复制字段占位符到文本框，再在 OnlyOffice 中自由调整位置和样式</p>
+        </div>
+        <div class="design-actions">
+          <el-button :icon="UploadFilled" @click="templateDialogVisible = true">上传 PPT 模板</el-button>
+          <el-button :icon="Refresh" :loading="pptxPreviewLoading" @click="refreshPptxPreview">重新生成样板</el-button>
+          <el-button type="primary" :disabled="!designRun" @click="openConfirmTemplateDialog">确定为批量模板</el-button>
+        </div>
+      </div>
+      <div class="design-workspace">
+        <aside class="placeholder-panel">
+          <el-alert type="info" :closable="false" title="把字段拖到右侧幻灯片，调整位置和样式后写入 PPTX；也可复制占位符在 OnlyOffice 中使用。" />
+          <h3>产品字段</h3>
+          <button v-for="item in fields" :key="item.key" type="button" class="placeholder-item" draggable="true" @dragstart="startTokenDrag($event, `{{${item.key}}}`)" @click="copyPlaceholder(`{{${item.key}}}`)">
+            <span><strong>{{ item.label }}</strong><small>{{ item.key }}</small></span>
+            <el-icon><CopyDocument /></el-icon>
+          </button>
+          <h3>结构化组件</h3>
+          <button v-for="item in componentTokens" :key="item.token" type="button" class="placeholder-item" draggable="true" @dragstart="startTokenDrag($event, item.token)" @click="copyPlaceholder(item.token)">
+            <span><strong>{{ item.label }}</strong><small>{{ item.token }}</small></span>
+            <el-icon><CopyDocument /></el-icon>
+          </button>
+        </aside>
+        <div class="pptx-frame-shell">
+          <div v-if="designRun" class="design-mode-toolbar">
+            <el-radio-group v-model="designMode" size="small">
+              <el-radio-button value="layout">拖拽布局</el-radio-button>
+              <el-radio-button value="office">OnlyOffice 精修</el-radio-button>
+            </el-radio-group>
+            <template v-if="designMode === 'layout'">
+              <el-select v-model="currentSlide" size="small" style="width: 110px">
+                <el-option v-for="page in slideCount" :key="page" :label="`第 ${page} 页`" :value="page" />
+              </el-select>
+              <el-button size="small" type="primary" :loading="layoutSaving" @click="saveLayout">写入 PPTX</el-button>
+            </template>
+          </div>
+          <div v-if="designRun && designMode === 'layout'" class="layout-editor">
+            <div class="slide-canvas" :style="{ aspectRatio: `${slideWidth} / ${slideHeight}` }" @dragover.prevent @drop.prevent="dropToken">
+              <div
+                v-for="item in placements.filter((row) => row.slide === currentSlide)"
+                :key="item.id"
+                class="layout-field"
+                :class="{ 'layout-field--selected': item.id === selectedPlacementId }"
+                :style="{ left: `${item.x * 100}%`, top: `${item.y * 100}%`, width: `${item.width * 100}%`, height: `${item.height * 100}%`, fontSize: `${Math.max(10, item.font_size * .65)}px`, color: item.color, fontWeight: item.bold ? '700' : '400' }"
+                @pointerdown="movePlacement($event, item)"
+              >{{ item.token }}</div>
+            </div>
+            <aside class="layout-properties">
+              <template v-if="selectedPlacement">
+                <h3>字段属性</h3>
+                <code>{{ selectedPlacement.token }}</code>
+                <label>宽度 <el-slider v-model="selectedPlacement.width" :min="0.08" :max="1 - selectedPlacement.x" :step="0.01" /></label>
+                <label>高度 <el-slider v-model="selectedPlacement.height" :min="0.04" :max="1 - selectedPlacement.y" :step="0.01" /></label>
+                <label>字号 <el-input-number v-model="selectedPlacement.font_size" :min="6" :max="96" /></label>
+                <label>文字颜色 <el-color-picker v-model="selectedPlacement.color" /></label>
+                <el-checkbox v-model="selectedPlacement.bold">粗体</el-checkbox>
+                <el-button type="danger" plain size="small" @click="removeSelectedPlacement">删除字段</el-button>
+              </template>
+              <el-empty v-else :image-size="48" description="选择已放置字段" />
+            </aside>
+          </div>
+          <iframe
+            v-else-if="designRun"
+            :key="`${designRun.id}-${editorRevision}`"
+            class="pptx-frame"
+            :src="`/reports/runs/${designRun.id}/editor?embedded=1`"
+            title="PPTX 即时预览编辑器"
+          />
+          <el-empty v-else description="选择产品后将自动生成 PPTX 样板" />
+        </div>
+      </div>
     </section>
 
     <section class="panel batch-panel">
@@ -617,6 +862,18 @@ onUnmounted(() => { if (batchPollTimer) window.clearInterval(batchPollTimer) })
       </el-table>
       <template #footer><el-button @click="templateDialogVisible = false">取消</el-button><el-button type="primary" @click="saveTemplate">上传模板</el-button></template>
     </el-dialog>
+
+    <el-dialog v-model="confirmTemplateDialogVisible" title="确认批量模板" width="620px">
+      <el-alert type="warning" :closable="false" show-icon title="请先等待 OnlyOffice 显示保存完成。确认后当前 PPTX 将成为不可变的已发布模板，批量生成会替换其中的占位符。" />
+      <el-form label-position="top" style="margin-top: 18px">
+        <el-form-item label="模板名称"><el-input v-model="confirmTemplateForm.name" maxlength="200" /></el-form-item>
+        <el-form-item label="模板说明"><el-input v-model="confirmTemplateForm.description" type="textarea" :rows="3" maxlength="1000" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="confirmTemplateDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="confirmDesignTemplate">校验并发布</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -632,7 +889,30 @@ onUnmounted(() => { if (batchPollTimer) window.clearInterval(batchPollTimer) })
 .preview-metrics small { color: var(--ink-600); }
 .preview-metrics strong { color: var(--navy-800); font-size: 20px; font-variant-numeric: tabular-nums; }
 .data-note { margin: 8px 0 0; color: var(--ink-600); font-size: 12px; text-align: right; }
-.field-panel, .run-panel, .batch-panel { margin-top: 18px; }
+.field-panel, .run-panel, .batch-panel, .design-panel { margin-top: 18px; }
+.design-actions { display: flex; gap: 8px; }
+.design-workspace { min-height: 680px; display: grid; grid-template-columns: 280px minmax(0, 1fr); border-top: 1px solid var(--line); }
+.placeholder-panel { max-height: 680px; padding: 14px; overflow: auto; border-right: 1px solid var(--line); background: #f8faf9; }
+.placeholder-panel h3 { margin: 18px 2px 8px; color: var(--navy-800); font-size: 13px; }
+.placeholder-item { width: 100%; padding: 9px 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--ink-900); cursor: pointer; text-align: left; }
+.placeholder-item:hover { border-color: var(--line); background: #fff; }
+.placeholder-item span { min-width: 0; display: grid; gap: 2px; }
+.placeholder-item strong, .placeholder-item small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.placeholder-item strong { font-size: 12px; }
+.placeholder-item small { color: var(--ink-600); font-size: 10px; }
+.pptx-frame-shell { min-width: 0; min-height: 680px; position: relative; background: #eef3f3; }
+.pptx-frame { width: 100%; height: 680px; display: block; border: 0; }
+.design-mode-toolbar { height: 48px; padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--line); background: #fff; }
+.design-mode-toolbar > :last-child { margin-left: auto; }
+.layout-editor { min-height: 632px; padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr) 210px; align-items: start; gap: 18px; overflow: auto; }
+.slide-canvas { width: min(100%, 900px); aspect-ratio: 16 / 9; position: relative; overflow: hidden; border: 1px solid #cad7d7; border-radius: 4px; background: #fff; box-shadow: 0 12px 32px rgba(23,59,77,.12); }
+.slide-canvas::after { content: '将字段拖到这里'; position: absolute; inset: 50% auto auto 50%; transform: translate(-50%, -50%); color: #bdc9cc; font-size: 13px; pointer-events: none; }
+.layout-field { z-index: 2; position: absolute; padding: 5px 7px; overflow: hidden; border: 1px dashed #23a69a; background: rgba(232,250,247,.92); cursor: move; user-select: none; touch-action: none; white-space: nowrap; text-overflow: ellipsis; }
+.layout-field--selected { border: 2px solid #0d8e83; box-shadow: 0 0 0 3px rgba(13,142,131,.14); }
+.layout-properties { padding: 14px; display: grid; gap: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.layout-properties h3 { margin: 0; color: var(--navy-800); font-size: 14px; }
+.layout-properties code { padding: 7px; overflow-wrap: anywhere; border-radius: 6px; background: #f1f5f4; font-size: 10px; }
+.layout-properties label { display: grid; gap: 4px; color: var(--ink-600); font-size: 11px; }
 .batch-actions { display: flex; justify-content: flex-end; gap: 8px; margin: 14px 0; }
 .field-groups { padding: 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .field-group { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; }
@@ -643,6 +923,6 @@ onUnmounted(() => { if (batchPollTimer) window.clearInterval(batchPollTimer) })
 .field-copy strong { overflow: hidden; color: var(--ink-900); font-size: 13px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
 .file-note { margin-left: 12px; color: var(--ink-600); }
 .template-error { color: var(--el-color-danger); cursor: help; }
-@media (max-width: 1080px) { .report-workspace { grid-template-columns: 1fr; } .field-groups { grid-template-columns: 1fr; } }
+@media (max-width: 1080px) { .report-workspace { grid-template-columns: 1fr; } .field-groups { grid-template-columns: 1fr; } .design-workspace { grid-template-columns: 230px minmax(0, 1fr); } }
 @media (max-width: 640px) { .form-grid, .section-checkboxes, .preview-metrics { grid-template-columns: 1fr; } }
 </style>
