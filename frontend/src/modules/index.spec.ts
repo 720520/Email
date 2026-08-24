@@ -20,7 +20,7 @@ describe('业务模块注册中心', () => {
     ])
     expect(businessRoutes.map((route) => route.name)).toEqual([
       'overview', 'emails', 'mailboxes', 'fund-nav', 'fund-products', 'exceptions', 'operations',
-      'reports',
+      'reports', 'report-fields', 'report-editor',
       'tenant-management',
     ])
   })

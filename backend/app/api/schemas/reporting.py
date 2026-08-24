@@ -15,6 +15,12 @@ class ReportTemplateItem(BaseModel):
     original_name: str | None = None
     is_active: bool = True
     create_time: datetime | None = None
+    version_id: int | None = None
+    version: int | None = None
+    status: Literal["builtin", "draft", "validating", "published", "archived"] = "published"
+    required_fields: list[str] = Field(default_factory=list)
+    required_components: list[str] = Field(default_factory=list)
+    validation_errors: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ReportProductField(BaseModel):
@@ -110,6 +116,11 @@ class ReportRunItem(BaseModel):
     report_date: date
     status: str
     output_filename: str | None
+    current_version_id: int | None = None
+    current_version: int | None = None
+    template_version_id: int | None = None
+    error_stage: str | None = None
+    error_code: str | None = None
     error_message: str | None
     create_time: datetime
 
@@ -117,3 +128,60 @@ class ReportRunItem(BaseModel):
 class ReportGenerateResponse(BaseModel):
     run: ReportRunItem
     download_url: str | None
+
+
+class ReportFileVersionItem(BaseModel):
+    id: int
+    report_run_id: int
+    version: int
+    source: str
+    filename: str
+    content_hash: str
+    file_size: int
+    create_time: datetime
+
+
+class ReportBatchCreate(BaseModel):
+    product_ids: list[int] = Field(default_factory=list, max_length=1000)
+    product_code_contains: str | None = Field(default=None, max_length=100)
+    product_name_contains: str | None = Field(default=None, max_length=200)
+    template_key: str = Field(max_length=64)
+    report_date: date
+    sections: list[str] = Field(default_factory=list, max_length=20)
+    settings: dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: str = Field(min_length=8, max_length=128)
+
+    @model_validator(mode="after")
+    def require_selection(self) -> "ReportBatchCreate":
+        if not self.product_ids and not (self.product_code_contains or self.product_name_contains):
+            raise ValueError("必须选择基金或提供产品筛选条件")
+        return self
+
+
+class ReportBatchItemView(BaseModel):
+    id: int
+    fund_product_id: int
+    product_name: str
+    status: str
+    report_run_id: int | None
+    attempt_count: int
+    error_code: str | None
+    error_message: str | None
+
+
+class ReportBatchView(BaseModel):
+    id: int
+    template_key: str
+    template_version_id: int | None
+    report_date: date
+    status: str
+    total_count: int
+    success_count: int
+    failed_count: int
+    cancelled_count: int
+    create_time: datetime
+
+
+class OnlyOfficeSessionResponse(BaseModel):
+    api_url: str
+    config: dict[str, Any]

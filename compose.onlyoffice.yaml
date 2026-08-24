@@ -1,0 +1,30 @@
+services:
+  onlyoffice-documentserver:
+    image: onlyoffice/documentserver:9.4.0.1
+    container_name: fund-nav-onlyoffice
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:80"
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: "${FUND_NAV_ONLYOFFICE__JWT_SECRET:?OnlyOffice JWT secret is required}"
+      JWT_HEADER: AuthorizationJwt
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
+      ALLOW_META_IP_ADDRESS: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - onlyoffice_data:/var/www/onlyoffice/Data
+      - onlyoffice_logs:/var/log/onlyoffice
+      - onlyoffice_lib:/var/lib/onlyoffice
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
+
+volumes:
+  onlyoffice_data:
+  onlyoffice_logs:
+  onlyoffice_lib:

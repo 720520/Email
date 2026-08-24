@@ -139,6 +139,22 @@ class ReportSettings(BaseModel):
 
     max_contract_bytes: int = Field(default=100 * 1024 * 1024, ge=1024)
     max_template_bytes: int = Field(default=150 * 1024 * 1024, ge=1024)
+    worker_concurrency: int = Field(default=2, ge=1, le=16)
+    worker_poll_seconds: float = Field(default=2.0, ge=0.1, le=60)
+    worker_stale_minutes: int = Field(default=15, ge=1, le=1440)
+
+
+class OnlyOfficeSettings(BaseModel):
+    """ONLYOFFICE Document Server 连接与短期文件授权。"""
+
+    enabled: bool = False
+    public_url: str = "http://127.0.0.1:8080"
+    internal_url: str = "http://127.0.0.1:8080"
+    callback_base_url: str = "http://host.docker.internal:8000"
+    jwt_secret: SecretStr = SecretStr("")
+    request_timeout: float = Field(default=5.0, ge=0.5, le=60)
+    max_download_bytes: int = Field(default=200 * 1024 * 1024, ge=1024)
+    file_token_ttl_seconds: int = Field(default=300, ge=30, le=3600)
 
 
 class SecuritySettings(BaseModel):
@@ -190,6 +206,7 @@ class Settings(BaseSettings):
     excel: ExcelSettings = Field(default_factory=ExcelSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     reports: ReportSettings = Field(default_factory=ReportSettings)
+    onlyoffice: OnlyOfficeSettings = Field(default_factory=OnlyOfficeSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
 
     @model_validator(mode="after")
@@ -204,6 +221,8 @@ class Settings(BaseSettings):
             and self.security.audit_signing_key.get_secret_value()
         ):
             raise ValueError("生产环境必须分别配置邮箱凭据加密密钥和审计签名密钥")
+        if self.onlyoffice.enabled and len(self.onlyoffice.jwt_secret.get_secret_value()) < 32:
+            raise ValueError("OnlyOffice 启用时必须配置至少 32 位独立 JWT 密钥")
         return self
 
     @classmethod

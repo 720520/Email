@@ -42,8 +42,15 @@ def test_initial_migration_upgrade_check_and_downgrade(tmp_path: Path, monkeypat
         "mailbox_user_grant",
         "product_document",
         "report_definition",
+        "report_batch",
+        "report_batch_item",
+        "report_field_definition",
+        "report_field_definition_version",
+        "report_field_value",
+        "report_file_version",
         "report_run",
         "report_template",
+        "report_template_version",
         "tenant",
         "tenant_membership",
     }
@@ -59,14 +66,10 @@ def test_initial_migration_upgrade_check_and_downgrade(tmp_path: Path, monkeypat
         "total_assets",
         "parent_product_code",
     }.issubset(fund_nav_columns)
-    product_uniques = {
-        item["name"] for item in inspector.get_unique_constraints("fund_product")
-    }
+    product_uniques = {item["name"] for item in inspector.get_unique_constraints("fund_product")}
     assert "uq_fund_product_tenant_product_code" in product_uniques
     product_columns = {item["name"] for item in inspector.get_columns("fund_product")}
-    assert {"source_profile", "source_profile_meta", "manual_profile"}.issubset(
-        product_columns
-    )
+    assert {"source_profile", "source_profile_meta", "manual_profile"}.issubset(product_columns)
     email_uniques = {item["name"] for item in inspector.get_unique_constraints("email_record")}
     assert "uq_email_record_scope_uidvalidity_uid" in email_uniques
     mailbox_columns = {item["name"] for item in inspector.get_columns("mailbox_account")}
@@ -89,8 +92,15 @@ def test_initial_migration_upgrade_check_and_downgrade(tmp_path: Path, monkeypat
         "fund_product",
         "product_document",
         "report_definition",
+        "report_batch",
+        "report_batch_item",
+        "report_field_definition",
+        "report_field_definition_version",
+        "report_field_value",
+        "report_file_version",
         "report_run",
         "report_template",
+        "report_template_version",
         "audit_event",
     ):
         assert "tenant_id" in {item["name"] for item in inspector.get_columns(table_name)}

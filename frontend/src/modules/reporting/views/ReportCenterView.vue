@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { DocumentAdd, Download, EditPen, Plus, Refresh, UploadFilled, View } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 
 import PageHeader from '@/components/PageHeader.vue'
 import { getFundProducts } from '@/modules/fund-operations/api'
@@ -11,19 +12,30 @@ import { apiErrorMessage } from '@/platform/api/http'
 import { useAuthStore } from '@/platform/auth/auth.store'
 
 import {
+  cancelReportBatch,
+  createReportBatch,
   createReportDefinition,
+  downloadReportBatch,
   downloadReport,
   generateReport,
   getReportDefinitions,
+  getReportBatch,
+  getReportBatchItems,
   getReportProductFields,
   getReportRuns,
   getReportTemplates,
   previewReport,
+  regenerateReport,
+  retryReportBatch,
+  publishReportTemplate,
   updateReportProductField,
   uploadProductContract,
   uploadReportTemplate,
+  validateReportTemplate,
 } from '../api'
 import type {
+  ReportBatch,
+  ReportBatchItem,
   ReportDefinition,
   ReportPreview,
   ReportProductField,
@@ -32,9 +44,15 @@ import type {
 } from '../api/types'
 
 const auth = useAuthStore()
+const router = useRouter()
 const loading = ref(false)
 const previewLoading = ref(false)
 const generating = ref(false)
+const batchCreating = ref(false)
+const batch = ref<ReportBatch>()
+const batchItems = ref<ReportBatchItem[]>([])
+const batchProductIds = ref<number[]>([])
+let batchPollTimer: number | undefined
 const products = ref<FundProductItem[]>([])
 const templates = ref<ReportTemplateItem[]>([])
 const definitions = ref<ReportDefinition[]>([])
@@ -214,6 +232,83 @@ async function makeReport() {
   }
 }
 
+const batchProgress = computed(() => {
+  if (!batch.value?.total_count) return 0
+  const done = batch.value.success_count + batch.value.failed_count + batch.value.cancelled_count
+  return Math.round(done * 100 / batch.value.total_count)
+})
+
+async function refreshBatch() {
+  if (!batch.value) return
+  try {
+    const [current, items] = await Promise.all([
+      getReportBatch(batch.value.id),
+      getReportBatchItems(batch.value.id),
+    ])
+    batch.value = current
+    batchItems.value = items
+    if (!['pending', 'processing'].includes(current.status) && batchPollTimer) {
+      window.clearInterval(batchPollTimer)
+      batchPollTimer = undefined
+    }
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  }
+}
+
+function startBatchPolling() {
+  if (batchPollTimer) window.clearInterval(batchPollTimer)
+  batchPollTimer = window.setInterval(() => void refreshBatch(), 2000)
+}
+
+async function makeBatch() {
+  if (!batchProductIds.value.length || !builder.reportDate) {
+    ElMessage.warning('请选择基金产品和报告日期')
+    return
+  }
+  batchCreating.value = true
+  try {
+    batch.value = await createReportBatch({
+      product_ids: batchProductIds.value,
+      template_key: builder.templateKey,
+      report_date: builder.reportDate,
+      sections: builder.sections,
+      settings: {},
+      idempotency_key: crypto.randomUUID(),
+    })
+    await refreshBatch()
+    startBatchPolling()
+    ElMessage.success(`已创建 ${batch.value.total_count} 份报表的异步任务`)
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  } finally {
+    batchCreating.value = false
+  }
+}
+
+async function retryBatch() {
+  if (!batch.value) return
+  batch.value = await retryReportBatch(batch.value.id)
+  startBatchPolling()
+}
+
+async function cancelBatch() {
+  if (!batch.value) return
+  batch.value = await cancelReportBatch(batch.value.id)
+  await refreshBatch()
+}
+
+async function downloadBatch() {
+  if (!batch.value) return
+  const blob = await downloadReportBatch(batch.value.id)
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `report-batch-${batch.value.id}.zip`
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
 async function downloadRun(run: ReportRun) {
   try {
     const blob = await downloadReport(run.id)
@@ -226,6 +321,20 @@ async function downloadRun(run: ReportRun) {
   } catch (error) {
     ElMessage.error(apiErrorMessage(error))
   }
+}
+
+async function regenerateRun(run: ReportRun) {
+  try {
+    await regenerateReport(run.id)
+    runs.value = await getReportRuns()
+    ElMessage.success('已按原始快照重新生成，并创建新的文件版本')
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  }
+}
+
+function previewRun(run: ReportRun) {
+  void router.push({ name: 'report-editor', params: { runId: run.id } })
 }
 
 function openFieldEditor(item: ReportProductField) {
@@ -295,13 +404,42 @@ async function saveTemplate() {
       templateForm.description.trim() || undefined,
     )
     templates.value.push(item)
-    builder.templateKey = item.key
-    templateDialogVisible.value = false
     templateFile.value = undefined
     templateForm.name = ''
     templateForm.description = ''
     if (templateInput.value) templateInput.value.value = ''
-    ElMessage.success('模板已归档并写入审计日志')
+    ElMessage.success(
+      item.validation_errors.length
+        ? `草稿已创建，发现 ${item.validation_errors.length} 个校验问题`
+        : '草稿已创建并通过校验，请确认发布',
+    )
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  }
+}
+
+async function validateTemplate(item: ReportTemplateItem) {
+  if (!item.id) return
+  try {
+    const validated = await validateReportTemplate(item.id)
+    templates.value = templates.value.map((row) => row.id === item.id ? validated : row)
+    ElMessage[validated.validation_errors.length ? 'warning' : 'success'](
+      validated.validation_errors.length
+        ? `校验未通过：${validated.validation_errors.length} 个问题`
+        : '模板校验通过，可以发布',
+    )
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  }
+}
+
+async function publishTemplate(item: ReportTemplateItem) {
+  if (!item.id) return
+  try {
+    const published = await publishReportTemplate(item.id)
+    templates.value = await getReportTemplates()
+    builder.templateKey = published.key
+    ElMessage.success(`模板 v${published.version} 已发布并锁定`)
   } catch (error) {
     ElMessage.error(apiErrorMessage(error))
   }
@@ -315,9 +453,14 @@ function sourceType(item: ReportProductField) {
   return item.is_manual ? 'warning' : item.source_type === 'contract' ? 'success' : item.source_type === 'email' ? 'info' : 'danger'
 }
 
+function templateValidationMessage(item: ReportTemplateItem) {
+  return item.validation_errors.map((error) => error.message).join('；')
+}
+
 watch(() => builder.productId, () => { void loadProductContext() })
 watch(() => builder.definitionId, applyDefinition)
 onMounted(async () => { await loadBaseData(); await loadProductContext() })
+onUnmounted(() => { if (batchPollTimer) window.clearInterval(batchPollTimer) })
 </script>
 
 <template>
@@ -356,7 +499,7 @@ onMounted(async () => { await loadBaseData(); await loadProductContext() })
             <el-form-item label="报表名称"><el-input v-model="builder.name" maxlength="200" /></el-form-item>
             <el-form-item label="报表模板">
               <el-select v-model="builder.templateKey" style="width: 100%">
-                <el-option v-for="item in templates" :key="item.key" :label="item.name" :value="item.key">
+                <el-option v-for="item in templates" :key="item.key" :label="item.name" :value="item.key" :disabled="item.status !== 'builtin' && item.status !== 'published'">
                   <span>{{ item.name }}</span><small class="option-note">{{ item.kind === 'builtin' ? '内置' : '租户模板' }}</small>
                 </el-option>
               </el-select>
@@ -388,6 +531,35 @@ onMounted(async () => { await loadBaseData(); await loadProductContext() })
       </article>
     </section>
 
+    <section class="panel batch-panel">
+      <div class="panel-header"><div><h2>批量生成</h2><p>任务由独立 Worker 异步处理，单份失败不影响其他产品</p></div></div>
+      <div class="panel-body">
+        <el-select v-model="batchProductIds" multiple filterable collapse-tags collapse-tags-tooltip placeholder="选择需要生成的基金" style="width: 100%">
+          <el-option v-for="item in products" :key="item.id" :label="`${item.product_name} · ${item.product_code}`" :value="item.id" />
+        </el-select>
+        <div class="batch-actions">
+          <el-button @click="batchProductIds = products.map((item) => item.id)">全选当前产品列表</el-button>
+          <el-button @click="batchProductIds = []">清空</el-button>
+          <el-button v-if="canEdit" type="primary" :loading="batchCreating" @click="makeBatch">创建批量任务</el-button>
+          <template v-if="batch">
+            <el-button v-if="batch.failed_count" @click="retryBatch">重试失败项</el-button>
+            <el-button v-if="['pending', 'processing'].includes(batch.status)" type="danger" plain @click="cancelBatch">取消未开始项</el-button>
+            <el-button :icon="Download" @click="downloadBatch">下载 ZIP</el-button>
+          </template>
+        </div>
+        <template v-if="batch">
+          <el-progress :percentage="batchProgress" :status="batch.failed_count ? 'exception' : batchProgress === 100 ? 'success' : undefined" />
+          <p class="data-note">共 {{ batch.total_count }} 份；成功 {{ batch.success_count }}，失败 {{ batch.failed_count }}，取消 {{ batch.cancelled_count }}</p>
+          <el-table :data="batchItems" max-height="320" empty-text="任务初始化中">
+            <el-table-column prop="product_name" label="产品" min-width="220" />
+            <el-table-column prop="status" label="状态" width="110" />
+            <el-table-column prop="attempt_count" label="尝试次数" width="90" />
+            <el-table-column prop="error_message" label="失败原因" min-width="240" show-overflow-tooltip />
+          </el-table>
+        </template>
+      </div>
+    </section>
+
     <section class="panel field-panel">
       <div class="panel-header">
         <div><h2>产品要素与来源</h2><p>合同和邮件提取值保留原始来源；人工覆盖必须填写原因并进入审计日志</p></div>
@@ -411,9 +583,10 @@ onMounted(async () => { await loadBaseData(); await loadProductContext() })
         <el-table-column prop="product_name" label="产品" min-width="230" />
         <el-table-column prop="report_date" label="报告日期" width="120" />
         <el-table-column prop="template_key" label="模板" min-width="150" />
+        <el-table-column label="文件版本" width="90"><template #default="{ row }">v{{ row.current_version ?? '—' }}</template></el-table-column>
         <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.status === 'success' ? 'success' : 'danger'">{{ row.status === 'success' ? '成功' : '失败' }}</el-tag></template></el-table-column>
         <el-table-column prop="create_time" label="生成时间" width="185" />
-        <el-table-column label="操作" width="100"><template #default="{ row }"><el-button v-if="row.status === 'success'" text type="primary" :icon="Download" @click="downloadRun(row)">下载</el-button><el-tooltip v-else :content="row.error_message || '生成失败'"><el-button text :icon="View">原因</el-button></el-tooltip></template></el-table-column>
+        <el-table-column label="操作" width="260"><template #default="{ row }"><template v-if="row.status === 'success'"><el-button text type="primary" :icon="View" @click="previewRun(row)">在线预览</el-button><el-button text type="primary" :icon="Download" @click="downloadRun(row)">下载</el-button><el-button v-if="canEdit" text type="success" @click="regenerateRun(row)">按快照重生成</el-button></template><el-tooltip v-else :content="`${row.error_stage || '生成'}：${row.error_message || '生成失败'}`"><el-button text :icon="View">原因</el-button></el-tooltip></template></el-table-column>
       </el-table>
     </section>
 
@@ -426,13 +599,22 @@ onMounted(async () => { await loadBaseData(); await loadProductContext() })
       <template #footer><el-button @click="fieldDialogVisible = false">取消</el-button><el-button type="warning" @click="saveField(true)">恢复来源值</el-button><el-button type="primary" @click="saveField(false)">保存人工值</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="templateDialogVisible" title="上传租户报表模板" width="620px">
+    <el-dialog v-model="templateDialogVisible" title="模板草稿与发布" width="760px">
       <el-alert type="info" :closable="false" show-icon title="支持 {{product_name}} 等字段占位符；已知产品表、收益表、合同要素表和折线图也会按结构自动识别。" />
       <el-form label-position="top" style="margin-top: 18px">
         <el-form-item label="模板名称"><el-input v-model="templateForm.name" /></el-form-item>
         <el-form-item label="模板说明"><el-input v-model="templateForm.description" type="textarea" :rows="2" /></el-form-item>
         <el-form-item label="PPTX 文件"><input ref="templateInput" type="file" accept=".pptx" @change="onTemplateSelected"><small class="file-note">{{ templateFile?.name ?? '尚未选择文件' }}</small></el-form-item>
       </el-form>
+      <el-divider />
+      <el-table :data="templates.filter((item) => item.kind === 'uploaded')" empty-text="尚未上传自定义模板" max-height="300">
+        <el-table-column prop="name" label="模板" min-width="160" />
+        <el-table-column label="版本" width="80"><template #default="{ row }">v{{ row.version }}</template></el-table-column>
+        <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.status === 'published' ? 'success' : row.validation_errors.length ? 'danger' : 'warning'">{{ row.status === 'published' ? '已发布' : row.status === 'validating' ? '校验中' : '草稿' }}</el-tag></template></el-table-column>
+        <el-table-column label="字段/组件" min-width="130"><template #default="{ row }">{{ row.required_fields.length }} / {{ row.required_components.length }}</template></el-table-column>
+        <el-table-column label="校验" min-width="170"><template #default="{ row }"><span v-if="!row.validation_errors.length">通过</span><el-tooltip v-else :content="templateValidationMessage(row)"><span class="template-error">{{ row.validation_errors.length }} 个问题</span></el-tooltip></template></el-table-column>
+        <el-table-column label="操作" width="150"><template #default="{ row }"><template v-if="row.status === 'draft'"><el-button text type="primary" @click="validateTemplate(row)">校验</el-button><el-button text type="success" :disabled="row.validation_errors.length > 0" @click="publishTemplate(row)">发布</el-button></template></template></el-table-column>
+      </el-table>
       <template #footer><el-button @click="templateDialogVisible = false">取消</el-button><el-button type="primary" @click="saveTemplate">上传模板</el-button></template>
     </el-dialog>
   </div>
@@ -450,7 +632,8 @@ onMounted(async () => { await loadBaseData(); await loadProductContext() })
 .preview-metrics small { color: var(--ink-600); }
 .preview-metrics strong { color: var(--navy-800); font-size: 20px; font-variant-numeric: tabular-nums; }
 .data-note { margin: 8px 0 0; color: var(--ink-600); font-size: 12px; text-align: right; }
-.field-panel, .run-panel { margin-top: 18px; }
+.field-panel, .run-panel, .batch-panel { margin-top: 18px; }
+.batch-actions { display: flex; justify-content: flex-end; gap: 8px; margin: 14px 0; }
 .field-groups { padding: 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .field-group { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; }
 .field-group h3 { margin: 0; padding: 11px 14px; color: var(--navy-800); background: #f5f8f7; font-size: 13px; }
@@ -459,6 +642,7 @@ onMounted(async () => { await loadBaseData(); await loadProductContext() })
 .field-copy span, .field-copy small { overflow: hidden; color: #829198; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .field-copy strong { overflow: hidden; color: var(--ink-900); font-size: 13px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
 .file-note { margin-left: 12px; color: var(--ink-600); }
+.template-error { color: var(--el-color-danger); cursor: help; }
 @media (max-width: 1080px) { .report-workspace { grid-template-columns: 1fr; } .field-groups { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .form-grid, .section-checkboxes, .preview-metrics { grid-template-columns: 1fr; } }
 </style>

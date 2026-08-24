@@ -19,10 +19,10 @@ def test_initializer_adds_keys_without_printing_or_overwriting(tmp_path: Path) -
         for line in first_content.splitlines()
         if line and not line.startswith("#")
     )
-    assert len(created) == 2
+    assert len(created) == 3
     assert created_again == ()
     assert env_file.read_text(encoding="utf-8") == first_content
-    assert values[created[0]] != values[created[1]]
+    assert len({values[name] for name in created}) == 3
     SecuritySettings(
         secret_key="test-session-secret-with-at-least-32-characters",
         credential_encryption_key=values[created[0]],

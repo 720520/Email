@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from app.core.config import get_settings
 from app.db.models import (
@@ -16,6 +17,8 @@ from app.db.models import (
 from app.db.session import configure_tenant_scope, get_database_manager
 from app.services.auth_service import AuthService
 from app.services.foundation_service import FoundationService
+
+pytestmark = pytest.mark.anyio
 
 
 def _seed_two_tenants() -> tuple[int, int]:
@@ -93,28 +96,26 @@ def _nav(*, tenant_id: int, mailbox_account_id: int, product_name: str) -> FundN
     )
 
 
-def test_api_never_returns_another_tenants_nav(app: FastAPI) -> None:
+async def test_api_never_returns_another_tenants_nav(app: FastAPI) -> None:
     _seed_two_tenants()
-    with TestClient(app) as client:
-        first_login = client.post(
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        first_login = await client.post(
             "/api/v1/auth/login",
             json={"username": "tenant_one_admin", "password": "TenantOne!2026"},
         )
-        first_result = client.get("/api/v1/fund-nav")
-        client.post("/api/v1/auth/logout")
-        second_login = client.post(
+        first_result = await client.get("/api/v1/fund-nav")
+        await client.post("/api/v1/auth/logout")
+        second_login = await client.post(
             "/api/v1/auth/login",
             json={"username": "tenant_two_admin", "password": "TenantTwo!2026"},
         )
-        second_result = client.get("/api/v1/fund-nav")
+        second_result = await client.get("/api/v1/fund-nav")
 
     assert first_login.status_code == 200
     assert first_result.status_code == 200
-    assert [item["product_name"] for item in first_result.json()["items"]] == [
-        "Tenant One Fund"
-    ]
+    assert [item["product_name"] for item in first_result.json()["items"]] == ["Tenant One Fund"]
     assert second_login.status_code == 200
     assert second_result.status_code == 200
-    assert [item["product_name"] for item in second_result.json()["items"]] == [
-        "Tenant Two Fund"
-    ]
+    assert [item["product_name"] for item in second_result.json()["items"]] == ["Tenant Two Fund"]

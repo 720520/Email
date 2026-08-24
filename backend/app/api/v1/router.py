@@ -12,7 +12,9 @@ from app.api.v1 import (
     fund_products,
     health,
     mailboxes,
+    onlyoffice,
     operations,
+    report_fields,
     reports,
     tenants,
 )
@@ -30,3 +32,5 @@ api_router.include_router(exceptions.router, prefix="/exceptions", tags=["异常
 api_router.include_router(audit.router, prefix="/audit-events", tags=["审计日志"])
 api_router.include_router(operations.router, prefix="/operations", tags=["运营操作"])
 api_router.include_router(reports.router, prefix="/reports", tags=["报表制作"])
+api_router.include_router(onlyoffice.router, prefix="/onlyoffice", tags=["OnlyOffice"])
+api_router.include_router(report_fields.router, prefix="/report-fields", tags=["报表字段"])

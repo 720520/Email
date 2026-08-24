@@ -12,6 +12,7 @@ from app.core.files import atomic_write_bytes
 _KEY_NAMES = (
     "FUND_NAV_SECURITY__CREDENTIAL_ENCRYPTION_KEY",
     "FUND_NAV_SECURITY__AUDIT_SIGNING_KEY",
+    "FUND_NAV_ONLYOFFICE__JWT_SECRET",
 )
 
 
@@ -66,7 +67,7 @@ def main() -> int:
         print(f"已安全写入 {len(created)} 个独立业务密钥；密钥内容不会显示。")
         print("请重启后端使新密钥生效。")
     else:
-        print("两个独立业务密钥均已存在，未修改 .env。")
+        print("三个独立业务密钥均已存在，未修改 .env。")
     return 0
 
 

@@ -17,10 +17,60 @@
   投资经理与投资策略支持人工覆盖、恢复附件来源及审计留痕。
 - 报表中心已开放：支持内置竖版周报、租户 PPTX 模板、自定义报表区域、合同要素提取、
   字段级来源标识与人工覆盖审计，并使用邮箱净值生成收益指标和净值曲线。
+- 字段中心已开放：系统字段通过受控 Provider 提供，租户可维护 `custom.*`
+  自定义字段、产品字段值、生效日和来源说明，并按产品和报告日期测试统一解析结果。
+- 批量报表已开放：支持多选基金、异步生成、进度轮询、单项失败重试、
+  取消未开始项和 ZIP 打包下载；独立 Worker 默认使用 2 个并发通道。
+- OnlyOffice 只读预览已接入：生成记录可直接打开 PPTX Web 预览，
+  使用独立 JWT、短期文件 URL 和租户校验；Document Server 停机时仍可下载。
 
 ## 使用教程
 
-以下命令均在 Windows PowerShell 中执行。首次使用需要完成配置、数据库迁移和管理员创建；以后启动时只需要分别启动后端和前端。
+项目同时提供 Linux 和 Windows 一键启动器。
+
+### Linux 一键启动（推荐）
+
+在文件管理器中双击 `一键启动.desktop`，或在项目根目录执行：
+
+```bash
+./一键启动.sh
+```
+
+启动器会自动检查 Python 3.11/3.12、Node.js 20.19+ 和 pnpm 11，必要时在
+项目内安装 Python 3.12 和 uv，然后安装依赖、生成业务密钥、执行数据库
+迁移并启动前后端。首次启动会在终端中要求创建管理员，密码至少 10 位且
+输入时不显示。启动成功后会打开 <http://127.0.0.1:5173>。
+
+服务在后台运行，日志位于 `logs/backend.log`、`logs/frontend.log`
+和 `logs/report-worker.log`。停止服务：
+
+```bash
+./一键启动.sh --stop
+```
+
+只初始化环境而不启动服务：
+
+```bash
+./一键启动.sh --setup-only
+```
+
+如果文件管理器首次打开 `.desktop` 文件时显示安全提示，选择“允许启动”即可。
+
+### OnlyOffice Document Server
+
+Linux 启动器会自动生成独立 OnlyOffice JWT 密钥，并在已安装 Docker
+Compose 时启动 [compose.onlyoffice.yaml](compose.onlyoffice.yaml) 中固定的
+`onlyoffice/documentserver:9.4.0.1`。本机首次安装 Docker 需要系统管理员密码：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y docker.io docker-compose-v2
+sudo usermod -aG docker "$USER"
+```
+
+注销并重新登录 Linux 后，再执行 `./一键启动.sh`。OnlyOffice 的浏览器地址
+默认为 <http://127.0.0.1:8080>，容器从 `host.docker.internal:8000` 读取经签名的
+报表文件。生产部署应将 `public_url` 和 `callback_base_url` 换成可相互访问的 HTTPS 地址。
 
 ### Windows 一键启动（推荐）
 
@@ -1538,6 +1588,33 @@ frontend/src/modules/reconciliation/
 ```
 
 然后只在 `frontend/src/modules/index.ts` 中加入新模块。基金运营模块内部的页面和 API 不需要感知新模块。
+
+## PPTX 动态报表模板
+
+报表中心支持“上传草稿 → 自动校验 → 人工发布 → 按发布版本生成”的完整流程。发布版本不可直接修改；上传新版时会生成新的草稿，上一发布版本在新版发布前仍可用于生产报表。
+
+PPTX 中可在文本框、组合形状和表格单元格内重复使用字段。推荐使用字段中心维护的完整字段键：
+
+```text
+{{product.name}}
+{{custom.roadshow_contact}}
+{{report.date|date:%Y年%m月%d日}}
+{{performance.weekly_return|percent:2}}
+{{custom.optional_note|default:"暂无说明"}}
+```
+
+结构化内容使用独占锚点文本框，锚点的位置和大小决定生成区域：
+
+```text
+{{chart:nav_history}}
+{{table:product_info}}
+{{table:performance}}
+{{image:custom.company_logo}}
+```
+
+发布校验会拒绝未注册字段、非法格式化器、未知结构组件、未闭合占位符，以及同一页重复的结构组件。报表生成时先解析模板声明的字段集合，再通过字段注册中心统一取值，并把值、来源及字段版本写入本次报表快照；因此批量任务可以对不同基金复用同一模板，同时保留可追溯性。
+
+单份报告生成后会创建不可变文件版本 v1。数据库内容后续变化不会修改历史输入快照；点击“按快照重生成”会使用原模板版本和原字段值创建 v2，而不是覆盖 v1。下载接口始终返回 `current_version_id` 指向的文件，历史版本可通过版本接口单独下载。
 
 ## 新增托管平台字段的推荐位置
 

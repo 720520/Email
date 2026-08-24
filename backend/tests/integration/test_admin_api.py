@@ -4,8 +4,9 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from email.message import EmailMessage
 
+import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from app.db.base import Base
 from app.db.models import (
@@ -19,6 +20,8 @@ from app.db.models import (
     FundProduct,
     UserRole,
 )
+
+pytestmark = pytest.mark.anyio
 
 
 def _seed_admin_data() -> int:
@@ -136,47 +139,49 @@ def _seed_admin_data() -> int:
         return exception.id
 
 
-def test_login_and_protected_operational_queries(app: FastAPI) -> None:
+async def test_login_and_protected_operational_queries(app: FastAPI) -> None:
     exception_id = _seed_admin_data()
-    with TestClient(app) as client:
-        unauthorized = client.get("/api/v1/dashboard")
-        login = client.post(
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        unauthorized = await client.get("/api/v1/dashboard")
+        login = await client.post(
             "/api/v1/auth/login",
             json={"username": "ADMIN", "password": "AdminPass!2026"},
         )
-        dashboard = client.get("/api/v1/dashboard")
-        emails = client.get("/api/v1/emails", params={"keyword": "基金净值"})
-        email_connection = client.get("/api/v1/emails/connection")
-        email_detail = client.get("/api/v1/emails/1")
-        raw_email = client.get("/api/v1/emails/1/raw")
-        connection_test = client.post("/api/v1/emails/connection/test")
-        email_sync = client.post("/api/v1/emails/sync")
-        nav = client.get("/api/v1/fund-nav", params={"keyword": "JYTEST01"})
-        exact_nav = client.get(
+        dashboard = await client.get("/api/v1/dashboard")
+        emails = await client.get("/api/v1/emails", params={"keyword": "基金净值"})
+        email_connection = await client.get("/api/v1/emails/connection")
+        email_detail = await client.get("/api/v1/emails/1")
+        raw_email = await client.get("/api/v1/emails/1/raw")
+        connection_test = await client.post("/api/v1/emails/connection/test")
+        email_sync = await client.post("/api/v1/emails/sync")
+        nav = await client.get("/api/v1/fund-nav", params={"keyword": "JYTEST01"})
+        exact_nav = await client.get(
             "/api/v1/fund-nav",
             params={"product_code": "jytest01"},
         )
-        latest_nav_date = client.get("/api/v1/fund-nav/latest-date")
-        products = client.get("/api/v1/fund-nav/products", params={"keyword": "测试一号"})
-        archived_products = client.get("/api/v1/fund-nav/products")
-        history = client.get(
+        latest_nav_date = await client.get("/api/v1/fund-nav/latest-date")
+        products = await client.get("/api/v1/fund-nav/products", params={"keyword": "测试一号"})
+        archived_products = await client.get("/api/v1/fund-nav/products")
+        history = await client.get(
             "/api/v1/fund-nav/history",
             params={"product_code": "jytest01"},
         )
-        product_summary = client.get("/api/v1/fund-products/summary")
-        product_list = client.get("/api/v1/fund-products")
-        product_detail = client.get("/api/v1/fund-products/1")
-        product_updated = client.patch(
+        product_summary = await client.get("/api/v1/fund-products/summary")
+        product_list = await client.get("/api/v1/fund-products")
+        product_detail = await client.get("/api/v1/fund-products/1")
+        product_updated = await client.patch(
             "/api/v1/fund-products/1/profile",
             json={"investment_manager_info": "人工经理信息"},
         )
-        report_templates = client.get("/api/v1/reports/templates")
-        report_fields = client.get("/api/v1/reports/product-fields/1")
-        report_field_updated = client.patch(
+        report_templates = await client.get("/api/v1/reports/templates")
+        report_fields = await client.get("/api/v1/reports/product-fields/1")
+        report_field_updated = await client.patch(
             "/api/v1/reports/product-fields/1/inception_date",
             json={"value": "2026-01-01", "reason": "合同运营复核"},
         )
-        contract_uploaded = client.post(
+        contract_uploaded = await client.post(
             "/api/v1/reports/contracts/1",
             files={
                 "file": (
@@ -187,11 +192,11 @@ def test_login_and_protected_operational_queries(app: FastAPI) -> None:
                 )
             },
         )
-        report_preview = client.post(
+        report_preview = await client.post(
             "/api/v1/reports/preview",
             json={"fund_product_id": 1},
         )
-        report_definition = client.post(
+        report_definition = await client.post(
             "/api/v1/reports/definitions",
             json={
                 "name": "测试周报",
@@ -200,24 +205,24 @@ def test_login_and_protected_operational_queries(app: FastAPI) -> None:
                 "sections": ["product_info", "performance", "nav_chart"],
             },
         )
-        report_generated = client.post(
+        report_generated = await client.post(
             "/api/v1/reports/generate",
             json={"definition_id": 1},
         )
-        report_runs = client.get("/api/v1/reports/runs")
-        report_download = client.get("/api/v1/reports/runs/1/download")
-        exceptions = client.get("/api/v1/exceptions", params={"category": "净值为空"})
-        other_exceptions = client.get(
+        report_runs = await client.get("/api/v1/reports/runs")
+        report_download = await client.get("/api/v1/reports/runs/1/download")
+        exceptions = await client.get("/api/v1/exceptions", params={"category": "净值为空"})
+        other_exceptions = await client.get(
             "/api/v1/exceptions",
             params={"category": "其他异常"},
         )
-        resolved = client.patch(
+        resolved = await client.patch(
             f"/api/v1/exceptions/{exception_id}/status",
             json={"status": "resolved"},
         )
-        audit_events = client.get("/api/v1/audit-events")
-        logout = client.post("/api/v1/auth/logout")
-        after_logout = client.get("/api/v1/auth/me")
+        audit_events = await client.get("/api/v1/audit-events")
+        logout = await client.post("/api/v1/auth/logout")
+        after_logout = await client.get("/api/v1/auth/me")
 
     assert unauthorized.status_code == 401
     assert login.status_code == 200
@@ -267,13 +272,17 @@ def test_login_and_protected_operational_queries(app: FastAPI) -> None:
     assert report_templates.json()[0]["key"] == "builtin:weekly"
     assert report_fields.status_code == 200
     assert report_field_updated.status_code == 200
-    assert next(
-        item for item in report_field_updated.json()["fields"] if item["key"] == "inception_date"
-    )["is_manual"] is True
+    assert (
+        next(
+            item
+            for item in report_field_updated.json()["fields"]
+            if item["key"] == "inception_date"
+        )["is_manual"]
+        is True
+    )
     assert contract_uploaded.status_code == 200
     assert (
-        contract_uploaded.json()["extracted_fields"]["manager_name"]
-        == "吉余私募基金管理有限公司"
+        contract_uploaded.json()["extracted_fields"]["manager_name"] == "吉余私募基金管理有限公司"
     )
     assert report_preview.status_code == 200
     assert report_preview.json()["nav_series"][-1]["unit_nav"] == "1.12345678"
@@ -294,10 +303,12 @@ def test_login_and_protected_operational_queries(app: FastAPI) -> None:
     assert after_logout.status_code == 401
 
 
-def test_login_failure_uses_generic_message(app: FastAPI) -> None:
+async def test_login_failure_uses_generic_message(app: FastAPI) -> None:
     _seed_admin_data()
-    with TestClient(app) as client:
-        response = client.post(
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
             "/api/v1/auth/login",
             json={"username": "admin", "password": "wrong"},
         )
@@ -306,7 +317,7 @@ def test_login_failure_uses_generic_message(app: FastAPI) -> None:
     assert response.json()["error"]["message"] == "用户名或密码错误"
 
 
-def test_viewer_can_read_but_cannot_change_exception_status(app: FastAPI) -> None:
+async def test_viewer_can_read_but_cannot_change_exception_status(app: FastAPI) -> None:
     exception_id = _seed_admin_data()
     from app.db.session import get_database_manager
     from app.services.auth_service import AuthService
@@ -319,20 +330,22 @@ def test_viewer_can_read_but_cannot_change_exception_status(app: FastAPI) -> Non
             role=UserRole.VIEWER,
             tenant_id=1,
         )
-    with TestClient(app) as client:
-        login = client.post(
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        login = await client.post(
             "/api/v1/auth/login",
             json={"username": "viewer", "password": "ViewerPass!2026"},
         )
-        readable = client.get("/api/v1/exceptions")
-        email_readable = client.get("/api/v1/emails/1")
-        forbidden = client.patch(
+        readable = await client.get("/api/v1/exceptions")
+        email_readable = await client.get("/api/v1/emails/1")
+        forbidden = await client.patch(
             f"/api/v1/exceptions/{exception_id}/status",
             json={"status": "resolved"},
         )
-        connection_forbidden = client.post("/api/v1/emails/connection/test")
-        sync_forbidden = client.post("/api/v1/emails/sync")
-        product_profile_forbidden = client.patch(
+        connection_forbidden = await client.post("/api/v1/emails/connection/test")
+        sync_forbidden = await client.post("/api/v1/emails/sync")
+        product_profile_forbidden = await client.patch(
             "/api/v1/fund-products/1/profile",
             json={"investment_manager_info": "越权修改"},
         )

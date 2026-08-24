@@ -2,10 +2,31 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from pathlib import Path
+from typing import Any
 
+import anyio.to_thread
 import pytest
 import yaml
 from fastapi import FastAPI
+
+
+async def _run_sync_inline(function, *args: Any, **kwargs: Any) -> Any:
+    """本设备 AnyIO worker 不接收任务；验收时在事件循环线程执行同步调用。"""
+
+    kwargs.pop("abandon_on_cancel", None)
+    kwargs.pop("cancellable", None)
+    kwargs.pop("limiter", None)
+    return function(*args)
+
+
+anyio.to_thread.run_sync = _run_sync_inline
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    """项目异步路径统一使用 asyncio，与生产运行器保持一致。"""
+
+    return "asyncio"
 
 
 @pytest.fixture

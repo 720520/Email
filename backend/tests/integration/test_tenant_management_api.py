@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from app.core.config import get_settings
@@ -9,6 +10,8 @@ from app.db.models import AuditEvent, UserRole
 from app.db.session import get_database_manager
 from app.services.auth_service import AuthService
 from app.services.foundation_service import FoundationService
+
+pytestmark = pytest.mark.anyio
 
 
 def _seed_platform_admin() -> tuple[int, int]:
@@ -26,19 +29,21 @@ def _seed_platform_admin() -> tuple[int, int]:
         return user.id, foundation.tenant_id
 
 
-def test_tenant_creation_login_selection_and_switch_are_closed_loop(app: FastAPI) -> None:
+async def test_tenant_creation_login_selection_and_switch_are_closed_loop(app: FastAPI) -> None:
     platform_user_id, default_tenant_id = _seed_platform_admin()
-    with TestClient(app) as client:
-        first_login = client.post(
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        first_login = await client.post(
             "/api/v1/auth/login",
             json={"username": "platform_admin", "password": "PlatformAdmin!2026"},
         )
-        created = client.post(
+        created = await client.post(
             "/api/v1/tenants",
             json={"code": "qianguo", "name": "千果私募"},
         )
         qianguo_id = created.json()["id"]
-        member = client.post(
+        member = await client.post(
             f"/api/v1/tenants/{qianguo_id}/members",
             json={
                 "username": "qianguo_operator",
@@ -46,14 +51,14 @@ def test_tenant_creation_login_selection_and_switch_are_closed_loop(app: FastAPI
                 "role": "operator",
             },
         )
-        client.post("/api/v1/auth/logout")
+        await client.post("/api/v1/auth/logout")
 
-        selection = client.post(
+        selection = await client.post(
             "/api/v1/auth/login",
             json={"username": "platform_admin", "password": "PlatformAdmin!2026"},
         )
-        unauthenticated_after_selection = client.get("/api/v1/auth/me")
-        selected_login = client.post(
+        unauthenticated_after_selection = await client.get("/api/v1/auth/me")
+        selected_login = await client.post(
             "/api/v1/auth/login",
             json={
                 "username": "platform_admin",
@@ -61,12 +66,12 @@ def test_tenant_creation_login_selection_and_switch_are_closed_loop(app: FastAPI
                 "tenant_id": qianguo_id,
             },
         )
-        available = client.get("/api/v1/auth/tenants")
-        switched = client.post(
+        available = await client.get("/api/v1/auth/tenants")
+        switched = await client.post(
             "/api/v1/auth/switch-tenant",
             json={"tenant_id": default_tenant_id},
         )
-        current = client.get("/api/v1/auth/me")
+        current = await client.get("/api/v1/auth/me")
 
     assert first_login.status_code == 200
     assert created.status_code == 201
@@ -104,19 +109,23 @@ def test_tenant_creation_login_selection_and_switch_are_closed_loop(app: FastAPI
     }.issubset(actions)
 
 
-def test_tenant_admin_permissions_and_last_admin_guard(app: FastAPI) -> None:
+async def test_tenant_admin_permissions_and_last_admin_guard(app: FastAPI) -> None:
     platform_user_id, default_tenant_id = _seed_platform_admin()
-    with TestClient(app) as client:
-        client.post(
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        await client.post(
             "/api/v1/auth/login",
             json={"username": "platform_admin", "password": "PlatformAdmin!2026"},
         )
-        tenant = client.post(
-            "/api/v1/tenants",
-            json={"code": "jiyu", "name": "吉余私募"},
+        tenant = (
+            await client.post(
+                "/api/v1/tenants",
+                json={"code": "jiyu", "name": "吉余私募"},
+            )
         ).json()
         jiyu_id = tenant["id"]
-        new_admin = client.post(
+        new_admin = await client.post(
             f"/api/v1/tenants/{jiyu_id}/members",
             json={
                 "username": "jiyu_admin",
@@ -133,17 +142,17 @@ def test_tenant_admin_permissions_and_last_admin_guard(app: FastAPI) -> None:
                 tenant_id=default_tenant_id,
                 is_platform_admin=False,
             )
-        client.post("/api/v1/auth/logout")
-        tenant_admin_login = client.post(
+        await client.post("/api/v1/auth/logout")
+        tenant_admin_login = await client.post(
             "/api/v1/auth/login",
             json={"username": "jiyu_admin", "password": "JiyuAdmin!2026"},
         )
-        forbidden_create = client.post(
+        forbidden_create = await client.post(
             "/api/v1/tenants",
             json={"code": "blocked", "name": "不能创建"},
         )
-        own_tenant_list = client.get("/api/v1/tenants")
-        own_member = client.post(
+        own_tenant_list = await client.get("/api/v1/tenants")
+        own_member = await client.post(
             f"/api/v1/tenants/{jiyu_id}/members",
             json={
                 "username": "jiyu_viewer",
@@ -151,12 +160,12 @@ def test_tenant_admin_permissions_and_last_admin_guard(app: FastAPI) -> None:
                 "role": "viewer",
             },
         )
-        forbidden_cross_tenant_identity = client.post(
+        forbidden_cross_tenant_identity = await client.post(
             f"/api/v1/tenants/{jiyu_id}/members",
             json={"username": "shared_identity", "role": "viewer"},
         )
-        other_tenant_members = client.get(f"/api/v1/tenants/{default_tenant_id}/members")
-        last_admin = client.put(
+        other_tenant_members = await client.get(f"/api/v1/tenants/{default_tenant_id}/members")
+        last_admin = await client.put(
             f"/api/v1/tenants/{jiyu_id}/members/{new_admin.json()['user_id']}",
             json={"role": "viewer", "is_active": False},
         )
@@ -173,14 +182,16 @@ def test_tenant_admin_permissions_and_last_admin_guard(app: FastAPI) -> None:
     assert platform_user_id != new_admin.json()["user_id"]
 
 
-def test_rejects_removing_the_only_tenant_admin(app: FastAPI) -> None:
+async def test_rejects_removing_the_only_tenant_admin(app: FastAPI) -> None:
     platform_user_id, _ = _seed_platform_admin()
-    with TestClient(app) as client:
-        client.post(
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        await client.post(
             "/api/v1/auth/login",
             json={"username": "platform_admin", "password": "PlatformAdmin!2026"},
         )
-        only_admin = client.put(
+        only_admin = await client.put(
             f"/api/v1/tenants/1/members/{platform_user_id}",
             json={"role": "viewer", "is_active": False},
         )

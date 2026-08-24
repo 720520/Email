@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import io
 import math
 from collections.abc import Iterable
 from datetime import date
@@ -15,6 +17,13 @@ from pptx.enum.chart import XL_CHART_TYPE
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Inches, Pt
+
+from app.services.report_template_service import (
+    COMPONENT_PATTERN,
+    TOKEN_PATTERN,
+    ReportTemplateInspector,
+    format_template_value,
+)
 
 _BLUE = RGBColor(64, 113, 190)
 _ORANGE = RGBColor(247, 130, 35)
@@ -87,13 +96,27 @@ class ReportPresentationService:
         header.fill.fore_color.rgb = _BLUE
         header.line.fill.background()
         self._add_text(
-            slide, fields.get("product_name") or snapshot["product_name"],
-            0.82, 0.06, 5.8, 0.42, size=23, bold=True, color=RGBColor(255, 255, 255),
+            slide,
+            fields.get("product_name") or snapshot["product_name"],
+            0.82,
+            0.06,
+            5.8,
+            0.42,
+            size=23,
+            bold=True,
+            color=RGBColor(255, 255, 255),
         )
         self._add_text(
-            slide, f"基金周报  {snapshot['report_date']}",
-            6.2, 0.12, 1.85, 0.28, size=10, bold=True,
-            color=RGBColor(255, 255, 255), align=PP_ALIGN.RIGHT,
+            slide,
+            f"基金周报  {snapshot['report_date']}",
+            6.2,
+            0.12,
+            1.85,
+            0.28,
+            size=10,
+            bold=True,
+            color=RGBColor(255, 255, 255),
+            align=PP_ALIGN.RIGHT,
         )
         y = 0.72
 
@@ -135,24 +158,34 @@ class ReportPresentationService:
         if "contract_terms" in sections:
             rows = [
                 [
-                    "管理机构", fields.get("manager_name") or "—",
-                    "托管/外包机构", fields.get("custodian_name") or "—",
+                    "管理机构",
+                    fields.get("manager_name") or "—",
+                    "托管/外包机构",
+                    fields.get("custodian_name") or "—",
                 ],
                 [
-                    "风险等级", fields.get("risk_level") or "—",
-                    "开放日", fields.get("open_day") or "—",
+                    "风险等级",
+                    fields.get("risk_level") or "—",
+                    "开放日",
+                    fields.get("open_day") or "—",
                 ],
                 [
-                    "存续期间", fields.get("duration") or "—",
-                    "锁定期", fields.get("lockup_period") or "—",
+                    "存续期间",
+                    fields.get("duration") or "—",
+                    "锁定期",
+                    fields.get("lockup_period") or "—",
                 ],
                 [
-                    "本基金承担费率", self._fund_fees(fields),
-                    "投资者承担费率", self._investor_fees(fields),
+                    "本基金承担费率",
+                    self._fund_fees(fields),
+                    "投资者承担费率",
+                    self._investor_fees(fields),
                 ],
                 [
-                    "业绩报酬", fields.get("performance_fee") or "—",
-                    "投资范围", fields.get("investment_scope") or "—",
+                    "业绩报酬",
+                    fields.get("performance_fee") or "—",
+                    "投资范围",
+                    fields.get("investment_scope") or "—",
                 ],
             ]
             available = max(1.55, min(2.15, 11.15 - y))
@@ -176,13 +209,25 @@ class ReportPresentationService:
             "report_date": snapshot["report_date"],
             "fund_fees": self._fund_fees(fields),
             "investor_fees": self._investor_fees(fields),
+            "product.name": snapshot["product_name"],
+            "product.code": snapshot.get("product_code") or fields.get("product_code"),
+            "product.investment_manager": fields.get("investment_manager"),
+            "product.investment_strategy": fields.get("investment_strategy"),
+            "product.inception_date": fields.get("inception_date"),
+            "product.manager_name": fields.get("manager_name"),
+            "product.custodian_name": fields.get("custodian_name"),
+            "report.date": snapshot["report_date"],
+            **{f"metric.{key}": value for key, value in metrics.items()},
+            **(snapshot.get("dynamic_fields") or {}),
         }
         for slide in presentation.slides:
             strategy_heading_bottom = None
             contract_table_top = None
-            for shape in self._all_shapes(slide.shapes):
+            for shape in list(self._all_shapes(slide.shapes)):
                 if getattr(shape, "has_text_frame", False):
                     original = shape.text.strip()
+                    if self._render_component_anchor(slide, shape, original, snapshot, tokens):
+                        continue
                     self._replace_tokens(shape.text_frame, tokens)
                     if original == "策略介绍":
                         strategy_heading_bottom = shape.top + shape.height
@@ -209,6 +254,9 @@ class ReportPresentationService:
                         )
                         self._set_text(shape, str(disclaimer))
                 if getattr(shape, "has_table", False):
+                    for row in shape.table.rows:
+                        for cell in row.cells:
+                            self._replace_tokens(cell.text_frame, tokens)
                     table_text = "|".join(
                         cell.text for row in shape.table.rows for cell in row.cells
                     )
@@ -219,7 +267,8 @@ class ReportPresentationService:
                     self._replace_chart(slide, shape, snapshot)
             if strategy_heading_bottom is not None and fields.get("investment_strategy"):
                 candidates = [
-                    shape for shape in slide.shapes
+                    shape
+                    for shape in slide.shapes
                     if getattr(shape, "has_text_frame", False)
                     and shape.top >= strategy_heading_bottom
                     and (contract_table_top is None or shape.top < contract_table_top)
@@ -261,8 +310,10 @@ class ReportPresentationService:
                     if not field_key:
                         continue
                     value = (
-                        self._fund_fees(fields) if field_key == "fund_fees"
-                        else self._investor_fees(fields) if field_key == "investor_fees"
+                        self._fund_fees(fields)
+                        if field_key == "fund_fees"
+                        else self._investor_fees(fields)
+                        if field_key == "investor_fees"
                         else fields.get(field_key) or "—"
                     )
                     self._set_cell_text(row.cells[label_column + 1], str(value))
@@ -334,8 +385,16 @@ class ReportPresentationService:
         return y + 0.43
 
     def _add_table(
-        self, slide, headers: list[str], rows: list[list[str]],
-        x: float, y: float, width: float, height: float, *, font_size: float,
+        self,
+        slide,
+        headers: list[str],
+        rows: list[list[str]],
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        *,
+        font_size: float,
     ) -> None:
         table = slide.shapes.add_table(
             len(rows) + 1, len(headers), Inches(x), Inches(y), Inches(width), Inches(height)
@@ -381,8 +440,16 @@ class ReportPresentationService:
 
     @staticmethod
     def _add_text(
-        slide, text: str, x: float, y: float, width: float, height: float, *,
-        size: float, bold: bool = False, color: RGBColor = _DARK,
+        slide,
+        text: str,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        *,
+        size: float,
+        bold: bool = False,
+        color: RGBColor = _DARK,
         align: PP_ALIGN = PP_ALIGN.LEFT,
     ) -> None:
         box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(width), Inches(height))
@@ -401,9 +468,99 @@ class ReportPresentationService:
     @staticmethod
     def _replace_tokens(text_frame, tokens: dict[str, Any]) -> None:
         for paragraph in text_frame.paragraphs:
-            for run in paragraph.runs:
-                for key, value in tokens.items():
-                    run.text = run.text.replace(f"{{{{{key}}}}}", str(value))
+            original = paragraph.text
+            if "{{" not in original:
+                continue
+
+            def replace(match) -> str:
+                expression = match.group(1).strip()
+                parts = [part.strip() for part in expression.split("|")]
+                target = parts[0]
+                if COMPONENT_PATTERN.match(target):
+                    return match.group(0)
+                normalized = ReportTemplateInspector.normalize_field_key(target)
+                value = tokens.get(normalized, tokens.get(target))
+                return format_template_value(value, tuple(parts[1:]))
+
+            rendered = TOKEN_PATTERN.sub(replace, original)
+            ReportPresentationService._set_paragraph_text(paragraph, rendered)
+
+    def _render_component_anchor(
+        self,
+        slide,
+        shape,
+        text: str,
+        snapshot: dict[str, Any],
+        tokens: dict[str, Any],
+    ) -> bool:
+        match = TOKEN_PATTERN.fullmatch(text)
+        if not match:
+            return False
+        target = match.group(1).strip().split("|", 1)[0].strip()
+        component_match = COMPONENT_PATTERN.match(target)
+        if not component_match:
+            return False
+        kind, name = component_match.groups()
+        x = shape.left / Inches(1)
+        y = shape.top / Inches(1)
+        width = shape.width / Inches(1)
+        height = shape.height / Inches(1)
+        shape.element.getparent().remove(shape.element)
+        if kind == "chart" and name == "nav_history":
+            self._add_nav_chart(slide, snapshot, x, y, width, height)
+        elif kind == "table" and name == "product_info":
+            fields, metrics = snapshot["fields"], snapshot["performance"]
+            headers = list(_PRODUCT_HEADER_FIELDS)
+            values = [
+                self._value_for(field_key, fields, metrics)
+                for field_key in _PRODUCT_HEADER_FIELDS.values()
+            ]
+            self._add_table(slide, headers, [values], x, y, width, height, font_size=8.5)
+        elif kind == "table" and name == "performance":
+            metrics = snapshot["performance"]
+            headers = ["收益指标", *_PERFORMANCE_HEADER_FIELDS.keys()]
+            values = [
+                snapshot["product_name"],
+                *[metrics.get(key) or "—" for key in _PERFORMANCE_HEADER_FIELDS.values()],
+            ]
+            self._add_table(slide, headers, [values], x, y, width, height, font_size=7.7)
+        elif kind == "image":
+            field_key = ReportTemplateInspector.normalize_field_key(name.strip())
+            self._add_data_image(slide, tokens.get(field_key), x, y, width, height)
+        return True
+
+    @staticmethod
+    def _add_data_image(slide, value: Any, x: float, y: float, width: float, height: float) -> None:
+        if (
+            not isinstance(value, str)
+            or not value.startswith("data:image/")
+            or ";base64," not in value
+        ):
+            ReportPresentationService._add_text(
+                slide, "图片未配置", x, y, width, height, size=9, color=_DARK
+            )
+            return
+        try:
+            content = base64.b64decode(value.split(";base64,", 1)[1], validate=True)
+        except ValueError:
+            content = b""
+        if not content or len(content) > 20 * 1024 * 1024:
+            ReportPresentationService._add_text(
+                slide, "图片数据无效", x, y, width, height, size=9, color=_DARK
+            )
+            return
+        slide.shapes.add_picture(
+            io.BytesIO(content), Inches(x), Inches(y), Inches(width), Inches(height)
+        )
+
+    @staticmethod
+    def _set_paragraph_text(paragraph, value: str) -> None:
+        if paragraph.runs:
+            paragraph.runs[0].text = value
+            for run in paragraph.runs[1:]:
+                run.text = ""
+        else:
+            paragraph.text = value
 
     @staticmethod
     def _set_cell_text(cell, value: str) -> None:

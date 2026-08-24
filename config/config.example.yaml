@@ -74,6 +74,22 @@ storage:
   data_directory: data
   archive_timezone: Asia/Shanghai
 
+reports:
+  max_contract_bytes: 104857600
+  max_template_bytes: 157286400
+  worker_concurrency: 2
+  worker_poll_seconds: 2
+  worker_stale_minutes: 15
+
+onlyoffice:
+  enabled: true
+  public_url: http://127.0.0.1:8080
+  internal_url: http://127.0.0.1:8080
+  callback_base_url: http://host.docker.internal:8000
+  request_timeout: 5
+  max_download_bytes: 209715200
+  file_token_ttl_seconds: 300
+
 security:
   # 生产环境通过 .env 注入三个相互独立的随机密钥，禁止写入 YAML。
   secret_key: ""

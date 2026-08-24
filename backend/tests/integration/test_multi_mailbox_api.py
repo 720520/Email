@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from app.core.config import get_settings
@@ -9,6 +10,8 @@ from app.db.models import MailboxAccount, MailboxUserGrant, UserRole
 from app.db.session import get_database_manager
 from app.services.auth_service import AuthService
 from app.services.foundation_service import FoundationService
+
+pytestmark = pytest.mark.anyio
 
 
 def _seed_users() -> tuple[int, int, int]:
@@ -31,16 +34,19 @@ def _seed_users() -> tuple[int, int, int]:
         return identity.tenant_id, admin.id, viewer.id
 
 
-def test_multi_mailbox_create_scope_grant_and_secret_redaction(app: FastAPI) -> None:
+async def test_multi_mailbox_create_scope_grant_and_secret_redaction(app: FastAPI) -> None:
     tenant_id, _, viewer_id = _seed_users()
-    with TestClient(app) as client:
-        assert client.post(
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        login = await client.post(
             "/api/v1/auth/login",
             json={"username": "mailbox_admin", "password": "MailboxAdmin!2026"},
-        ).status_code == 200
+        )
+        assert login.status_code == 200
 
-        security = client.get("/api/v1/mailboxes/security-status")
-        created = client.post(
+        security = await client.get("/api/v1/mailboxes/security-status")
+        created = await client.post(
             "/api/v1/mailboxes",
             json={
                 "display_name": "163 运营邮箱",
@@ -54,8 +60,8 @@ def test_multi_mailbox_create_scope_grant_and_secret_redaction(app: FastAPI) -> 
             },
         )
         mailbox_id = created.json()["id"]
-        listed = client.get("/api/v1/mailboxes")
-        duplicate = client.post(
+        listed = await client.get("/api/v1/mailboxes")
+        duplicate = await client.post(
             "/api/v1/mailboxes",
             json={
                 "display_name": "重复邮箱",
@@ -64,7 +70,7 @@ def test_multi_mailbox_create_scope_grant_and_secret_redaction(app: FastAPI) -> 
                 "credential": "another-code",
             },
         )
-        granted = client.put(
+        granted = await client.put(
             f"/api/v1/mailboxes/{mailbox_id}/grants/{viewer_id}",
             json={
                 "can_read_metadata": True,
@@ -74,13 +80,14 @@ def test_multi_mailbox_create_scope_grant_and_secret_redaction(app: FastAPI) -> 
                 "is_active": True,
             },
         )
-        client.post("/api/v1/auth/logout")
-        assert client.post(
+        await client.post("/api/v1/auth/logout")
+        login = await client.post(
             "/api/v1/auth/login",
             json={"username": "mailbox_viewer", "password": "MailboxViewer!2026"},
-        ).status_code == 200
-        viewer_list = client.get("/api/v1/mailboxes")
-        forbidden_create = client.post(
+        )
+        assert login.status_code == 200
+        viewer_list = await client.get("/api/v1/mailboxes")
+        forbidden_create = await client.post(
             "/api/v1/mailboxes",
             json={
                 "display_name": "越权邮箱",
@@ -88,7 +95,7 @@ def test_multi_mailbox_create_scope_grant_and_secret_redaction(app: FastAPI) -> 
                 "username": "forbidden@example.com",
             },
         )
-        forbidden_operation = client.post(f"/api/v1/mailboxes/{mailbox_id}/sync")
+        forbidden_operation = await client.post(f"/api/v1/mailboxes/{mailbox_id}/sync")
 
     assert security.status_code == 200
     assert security.json()["ready_for_credentials"] is True
@@ -136,7 +143,7 @@ def test_multi_mailbox_create_scope_grant_and_secret_redaction(app: FastAPI) -> 
         assert grant is not None
 
 
-def test_mailbox_id_filter_cannot_escape_granted_scope(app: FastAPI) -> None:
+async def test_mailbox_id_filter_cannot_escape_granted_scope(app: FastAPI) -> None:
     _, _, _ = _seed_users()
     with get_database_manager().session_factory() as session, session.begin():
         session.info["skip_tenant_scope"] = True
@@ -154,16 +161,19 @@ def test_mailbox_id_filter_cannot_escape_granted_scope(app: FastAPI) -> None:
         session.flush()
         hidden_id = mailbox.id
 
-    with TestClient(app) as client:
-        assert client.post(
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        login = await client.post(
             "/api/v1/auth/login",
             json={"username": "mailbox_viewer", "password": "MailboxViewer!2026"},
-        ).status_code == 200
-        filtered = client.get(
+        )
+        assert login.status_code == 200
+        filtered = await client.get(
             "/api/v1/emails",
             params={"mailbox_account_id": hidden_id},
         )
-        connection = client.get(
+        connection = await client.get(
             "/api/v1/emails/connection",
             params={"mailbox_account_id": hidden_id},
         )
