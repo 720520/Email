@@ -19,6 +19,12 @@ from app.db.models.fund_nav import FundNav
 from app.db.models.fund_product import FundProduct
 from app.db.models.job_run import JobRun
 from app.db.models.mailbox_account import MailboxAccount
+from app.db.models.parse_workflow import (
+    AttachmentParseTask,
+    FundNavRevision,
+    ParseResultRow,
+    ParseSession,
+)
 from app.db.models.report_field import (
     ReportFieldDefinition,
     ReportFieldDefinitionVersion,
@@ -40,6 +46,7 @@ __all__ = [
     "AppUser",
     "AuditEvent",
     "AttachmentRecord",
+    "AttachmentParseTask",
     "AttachmentStatus",
     "EmailRecord",
     "EmailStatus",
@@ -50,6 +57,7 @@ __all__ = [
     "FilingField",
     "FilingFileVersion",
     "FundNav",
+    "FundNavRevision",
     "FundProduct",
     "JobRun",
     "JobStatus",
@@ -57,6 +65,8 @@ __all__ = [
     "MailboxAccount",
     "MailboxUserGrant",
     "ProductDocument",
+    "ParseResultRow",
+    "ParseSession",
     "ReportDefinition",
     "ReportBatch",
     "ReportBatchItem",

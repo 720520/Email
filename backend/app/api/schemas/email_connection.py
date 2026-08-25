@@ -39,3 +39,4 @@ class EmailSyncResponse(BaseModel):
     ignored_count: int
     duplicate_count: int
     failed_count: int
+    queued_attachment_count: int

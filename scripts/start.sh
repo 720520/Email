@@ -15,10 +15,12 @@ LOG_DIR="$PROJECT_ROOT/logs"
 RUN_DIR="$PROJECT_ROOT/.codex_tmp/run"
 BACKEND_PID_FILE="$RUN_DIR/backend.pid"
 FRONTEND_PID_FILE="$RUN_DIR/frontend.pid"
-WORKER_PID_FILE="$RUN_DIR/report-worker.pid"
+REPORT_WORKER_PID_FILE="$RUN_DIR/report-worker.pid"
+PARSE_WORKER_PID_FILE="$RUN_DIR/parse-worker.pid"
 BACKEND_LOG="$LOG_DIR/backend.log"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
-WORKER_LOG="$LOG_DIR/report-worker.log"
+REPORT_WORKER_LOG="$LOG_DIR/report-worker.log"
+PARSE_WORKER_LOG="$LOG_DIR/parse-worker.log"
 PNPM_VERSION="11.9.0"
 
 SETUP_ONLY=0
@@ -100,7 +102,8 @@ stop_onlyoffice() {
 if ((STOP_ONLY)); then
   step "停止基金运营系统"
   stop_service "前端" "$FRONTEND_PID_FILE"
-  stop_service "报表 Worker" "$WORKER_PID_FILE"
+  stop_service "附件解析 Worker" "$PARSE_WORKER_PID_FILE"
+  stop_service "报表 Worker" "$REPORT_WORKER_PID_FILE"
   stop_service "后端" "$BACKEND_PID_FILE"
   stop_onlyoffice
   exit 0
@@ -247,14 +250,25 @@ start_frontend() {
 }
 
 start_report_worker() {
-  if pid_is_running "$WORKER_PID_FILE"; then
+  if pid_is_running "$REPORT_WORKER_PID_FILE"; then
     warn "报表 Worker 已在运行。"
     return
   fi
   step "启动批量报表 Worker"
   nohup "$VENV_PYTHON" -m app.cli.report_batch_worker \
-    >>"$WORKER_LOG" 2>&1 &
-  printf '%s\n' "$!" > "$WORKER_PID_FILE"
+    >>"$REPORT_WORKER_LOG" 2>&1 &
+  printf '%s\n' "$!" > "$REPORT_WORKER_PID_FILE"
+}
+
+start_parse_worker() {
+  if pid_is_running "$PARSE_WORKER_PID_FILE"; then
+    warn "附件解析 Worker 已在运行。"
+    return
+  fi
+  step "启动附件解析 Worker"
+  nohup "$VENV_PYTHON" -m app.cli.attachment_parse_worker \
+    >>"$PARSE_WORKER_LOG" 2>&1 &
+  printf '%s\n' "$!" > "$PARSE_WORKER_PID_FILE"
 }
 
 start_onlyoffice() {
@@ -305,6 +319,7 @@ fi
 
 start_backend
 start_report_worker
+start_parse_worker
 start_onlyoffice
 start_frontend
 

@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.models import (
+    AttachmentParseTask,
     AttachmentRecord,
     AttachmentStatus,
     EmailRecord,
@@ -62,12 +63,14 @@ class MailArchivePersistenceService:
         tenant_id: int,
         mailbox_account_id: int,
         repository: EmailRepository | None = None,
+        parse_max_attempts: int = 3,
     ) -> None:
         self.data_directory = data_directory.resolve()
         self.tenant_id = tenant_id
         self.mailbox_account_id = mailbox_account_id
         self.repository = repository or EmailRepository()
         self.exception_repository = ExceptionRepository()
+        self.parse_max_attempts = parse_max_attempts
 
     def persist(
         self,
@@ -97,8 +100,7 @@ class MailArchivePersistenceService:
             return ArchivePersistenceResult(existing.id, attachment_ids, False)
 
         has_supported_attachment = any(
-            item.stored_path.suffix.casefold() in {".xls", ".xlsx"}
-            for item in archive.attachments
+            item.stored_path.suffix.casefold() in {".xls", ".xlsx"} for item in archive.attachments
         )
         email = EmailRecord(
             tenant_id=self.tenant_id,
@@ -114,9 +116,7 @@ class MailArchivePersistenceService:
             receive_time=parsed.receive_time,
             attachment_count=len(archive.attachments),
             status=(EmailStatus.ARCHIVED if has_supported_attachment else EmailStatus.FAILED),
-            error_message=(
-                None if has_supported_attachment else "邮件中没有可解析的 Excel 附件"
-            ),
+            error_message=(None if has_supported_attachment else "邮件中没有可解析的 Excel 附件"),
             eml_path=self._stored_path(archive.eml_path),
         )
         session.add(email)
@@ -135,7 +135,7 @@ class MailArchivePersistenceService:
                 sha256=archived_attachment.sha256,
                 file_type=suffix.removeprefix(".") or archived_attachment.content_type,
                 parse_status=(
-                    AttachmentStatus.ARCHIVED if supported else AttachmentStatus.UNSUPPORTED
+                    AttachmentStatus.PENDING if supported else AttachmentStatus.UNSUPPORTED
                 ),
             )
             session.add(attachment)
@@ -156,6 +156,19 @@ class MailArchivePersistenceService:
                 ),
             )
         session.flush()
+        for attachment in attachments:
+            if attachment.parse_status == AttachmentStatus.PENDING:
+                session.add(
+                    AttachmentParseTask(
+                        tenant_id=self.tenant_id,
+                        mailbox_account_id=self.mailbox_account_id,
+                        attachment_id=attachment.id,
+                        source_job_run_id=job_run_id,
+                        status="queued",
+                        trigger_type="mail_sync",
+                        max_attempts=self.parse_max_attempts,
+                    )
+                )
         logger.info(
             "邮件归档记录写入数据库",
             extra={"email_id": email.id, "attachment_count": len(attachments)},
@@ -208,6 +221,19 @@ class NavPersistenceService:
 
         inserted_count = 0
         duplicate_count = 0
+        workbook_master_codes: dict[str, str] = {}
+        for record in result.records:
+            if record.product_code is None or record.product_name is None:
+                continue
+            candidate_code, candidate_name = master_product_identity(
+                product_name=record.product_name,
+                product_code=record.product_code.strip().upper(),
+                registration_code=record.registration_code,
+                parent_product_code=record.parent_product_code,
+                parent_product_name=record.parent_product_name,
+            )
+            if record.share_class is None:
+                workbook_master_codes[candidate_name.casefold()] = candidate_code
         for record in result.records:
             if (
                 record.product_code is None
@@ -228,6 +254,8 @@ class NavPersistenceService:
                 parent_product_code=record.parent_product_code,
                 parent_product_name=record.parent_product_name,
             )
+            if record.registration_code is None and record.parent_product_code is None:
+                master_code = workbook_master_codes.get(master_name.casefold(), master_code)
             candidate = FundNav(
                 tenant_id=attachment.tenant_id,
                 mailbox_account_id=attachment.mailbox_account_id,
@@ -286,7 +314,12 @@ class NavPersistenceService:
             error_count=error_count,
         )
         attachment.parse_status = status
-        if status in {AttachmentStatus.FAILED, AttachmentStatus.DUPLICATE}:
+        if status == AttachmentStatus.PARTIAL_SUCCESS:
+            attachment.error_message = (
+                f"部分解析成功：新增 {inserted_count} 条，错误 {error_count} 条，"
+                f"其中重复 {duplicate_count} 条"
+            )
+        elif status in {AttachmentStatus.FAILED, AttachmentStatus.DUPLICATE}:
             attachment.error_message = self._error_summary(
                 error_count=error_count,
                 duplicate_count=duplicate_count,
@@ -518,9 +551,7 @@ class NavPersistenceService:
         session.flush()
         statuses = set(
             session.scalars(
-                select(AttachmentRecord.parse_status).where(
-                    AttachmentRecord.email_id == email_id
-                )
+                select(AttachmentRecord.parse_status).where(AttachmentRecord.email_id == email_id)
             )
         )
         if statuses and statuses <= {AttachmentStatus.SUCCESS, AttachmentStatus.UNSUPPORTED}:
@@ -548,7 +579,7 @@ class DatabaseArchiveRecorder:
         tenant_id: int,
         mailbox_account_id: int,
         job_run_id: int | None = None,
-        attachment_processor: AttachmentProcessor | None = None,
+        parse_max_attempts: int = 3,
     ) -> None:
         self.session_factory = session_factory
         self.mailbox = mailbox
@@ -559,8 +590,8 @@ class DatabaseArchiveRecorder:
             data_directory,
             tenant_id=tenant_id,
             mailbox_account_id=mailbox_account_id,
+            parse_max_attempts=parse_max_attempts,
         )
-        self.attachment_processor = attachment_processor
 
     def record(
         self,
@@ -587,29 +618,6 @@ class DatabaseArchiveRecorder:
                 archive=archive,
                 job_run_id=self.job_run_id,
             )
-        if self.attachment_processor is not None and persisted.attachment_ids:
-            with self.session_factory() as session:
-                configure_tenant_scope(
-                    session,
-                    tenant_id=self.tenant_id,
-                    mailbox_ids=(self.mailbox_account_id,),
-                )
-                processable_ids = tuple(
-                    session.scalars(
-                        select(AttachmentRecord.id).where(
-                            AttachmentRecord.id.in_(persisted.attachment_ids),
-                            AttachmentRecord.parse_status.in_(
-                                {
-                                    AttachmentStatus.ARCHIVED,
-                                    AttachmentStatus.PENDING,
-                                    AttachmentStatus.PARSING,
-                                }
-                            ),
-                        )
-                    )
-                )
-            for attachment_id in processable_ids:
-                self.attachment_processor.process(attachment_id)
         return persisted
 
 

@@ -112,7 +112,11 @@ async def save_onlyoffice_callback(
         return {"error": 1}
 
     digest = hashlib.sha256(content).hexdigest()
-    current = session.get(ReportFileVersion, run.current_version_id) if run.current_version_id else None
+    current = (
+        session.get(ReportFileVersion, run.current_version_id)
+        if run.current_version_id
+        else None
+    )
     if current is not None and current.content_hash == digest:
         return {"error": 0}
 

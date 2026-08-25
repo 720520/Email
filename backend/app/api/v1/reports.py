@@ -28,19 +28,19 @@ from app.api.schemas.reporting import (
     ReportBatchView,
     ReportDefinitionCreate,
     ReportDefinitionItem,
+    ReportDesignMetadata,
     ReportFieldUpdate,
     ReportFileVersionItem,
     ReportGenerateRequest,
     ReportGenerateResponse,
-    ReportDesignMetadata,
     ReportLayoutPlacement,
     ReportLayoutUpdate,
     ReportPreviewRequest,
     ReportPreviewResponse,
     ReportProductFieldsResponse,
     ReportRunItem,
-    ReportTemplateItem,
     ReportTemplateFromRunRequest,
+    ReportTemplateItem,
 )
 from app.core.config import get_settings
 from app.core.credential_security import audit_signing_key
@@ -471,7 +471,9 @@ def get_report_design_metadata(
     placements: list[ReportLayoutPlacement] = []
     for slide_number, slide in enumerate(presentation.slides, start=1):
         for shape in slide.shapes:
-            if not shape.name.startswith("codex-field:") or not getattr(shape, "has_text_frame", False):
+            if not shape.name.startswith("codex-field:") or not getattr(
+                shape, "has_text_frame", False
+            ):
                 continue
             placement_id = shape.name.removeprefix("codex-field:")
             placements.append(

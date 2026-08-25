@@ -177,6 +177,7 @@ export interface EmailSyncResult {
   ignored_count: number
   duplicate_count: number
   failed_count: number
+  queued_attachment_count: number
 }
 
 export interface FundNavItem {
@@ -256,6 +257,8 @@ export interface FundProductItem {
   product_name: string
   latest_source_date: string | null
   share_count: number
+  summary_source: 'total_share' | 'single_share' | 'share_aggregate' | 'unavailable'
+  has_share_detail: boolean
   unit_nav: string | null
   total_nav: string | null
   asset_value: string | null
@@ -347,11 +350,150 @@ export interface ExceptionItem {
 export interface ManualReparseResult {
   email_id: number
   attachment_id: number
+  parse_session_id: number
   inserted_count: number
   duplicate_count: number
   exception_count: number
+  valid_count: number
+  invalid_count: number
   status: string
   source_file: string
+  message: string
+  records: ParseReviewRow[]
+  issues: ParseReviewIssue[]
+}
+
+export interface ParseReviewIssue {
+  code: string
+  severity: string
+  message: string
+  sheet_name: string | null
+  row_number: number | null
+  field_name: string | null
+  raw_value: unknown
+  raw_data: Record<string, unknown> | null
+}
+
+export interface ParseReviewRow {
+  id: number
+  status: string
+  source_sheet: string
+  source_row: number
+  source_type: string
+  product_name: string | null
+  product_code: string | null
+  asset_code: string | null
+  registration_code: string | null
+  share_class: string | null
+  nav_date: string | null
+  unit_nav: string | null
+  total_nav: string | null
+  asset_value: string | null
+  asset_share: string | null
+  paid_in_capital: string | null
+  holding_shares: string | null
+  reference_market_value: string | null
+  total_assets: string | null
+  total_assets_nav_ratio: string | null
+  investor_name: string | null
+  investor_account: string | null
+  parent_unit_nav: string | null
+  parent_total_nav: string | null
+  parent_asset_value: string | null
+  parent_product_code: string | null
+  parent_product_name: string | null
+  notes: string | null
+  parent_paid_in_capital: string | null
+  investment_manager_info: string | null
+  investment_strategy_info: string | null
+  issues: ParseReviewIssue[]
+  original_data: Record<string, unknown>
+  validation_message: string | null
+  is_edited: boolean
+  edit_reason: string | null
+  row_version: number
+  conflict_action: 'unresolved' | 'keep_existing' | 'replace_existing'
+  existing_nav_id: number | null
+  committed_nav_id: number | null
+}
+
+export interface ParseReviewSession {
+  id: number
+  attachment_id: number
+  source_attachment_id: number | null
+  status: string
+  parser_version: string
+  source_file: string
+  row_count: number
+  valid_count: number
+  invalid_count: number
+  ignored_count: number
+  duplicate_count: number
+  inserted_count: number
+  error_message: string | null
+  create_time: string
+  update_time: string
+  confirmed_at: string | null
+  file_issues: ParseReviewIssue[]
+  rows: ParseReviewRow[]
+}
+
+export interface ParseReviewRowUpdate {
+  product_name?: string | null
+  product_code?: string | null
+  asset_code?: string | null
+  registration_code?: string | null
+  share_class?: string | null
+  nav_date?: string | null
+  unit_nav?: string | null
+  total_nav?: string | null
+  asset_value?: string | null
+  asset_share?: string | null
+  paid_in_capital?: string | null
+  parent_product_code?: string | null
+  parent_product_name?: string | null
+  notes?: string | null
+  ignored?: boolean
+  conflict_action?: 'unresolved' | 'keep_existing' | 'replace_existing'
+  edit_reason: string
+  expected_version: number
+}
+
+export interface ParseCommitResult {
+  parse_session_id: number
+  status: string
+  inserted_count: number
+  duplicate_count: number
+  exception_count: number
+  message: string
+}
+
+export interface ParseTaskItem {
+  id: number
+  attachment_id: number
+  source_file: string
+  mailbox_name: string
+  status: string
+  attempt_count: number
+  max_attempts: number
+  parser_version: string | null
+  inserted_count: number
+  duplicate_count: number
+  exception_count: number
+  error_message: string | null
+  queued_at: string
+  started_at: string | null
+  finished_at: string | null
+}
+
+export interface ParseTaskSummary {
+  queued: number
+  running: number
+  success: number
+  partial_success: number
+  duplicate: number
+  failed: number
+  recent: ParseTaskItem[]
 }
 
 export type EmailPage = PageResponse<EmailItem>

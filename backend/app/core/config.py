@@ -68,6 +68,9 @@ class EmailSettings(BaseModel):
     lookback_days: int = Field(default=7, ge=1, le=365)
     max_messages_per_run: int = Field(default=200, ge=1, le=5000)
     max_attachment_bytes: int = Field(default=50 * 1024 * 1024, ge=1024)
+    max_raw_message_bytes: int = Field(default=100 * 1024 * 1024, ge=1024)
+    max_attachments_per_email: int = Field(default=30, ge=1, le=500)
+    max_total_attachment_bytes: int = Field(default=100 * 1024 * 1024, ge=1024)
     retry_attempts: int = Field(default=3, ge=1, le=10)
     retry_base_delay_seconds: float = Field(default=1.0, ge=0, le=60)
     uid_reservation_stale_seconds: int = Field(default=1800, ge=60, le=86400)
@@ -102,6 +105,17 @@ class ExcelSettings(BaseModel):
     ambiguity_score_delta: float = Field(default=5.0, ge=0, le=50)
     max_consecutive_blank_rows: int = Field(default=20, ge=1, le=200)
     max_columns: int = Field(default=100, ge=5, le=1000)
+    max_workbook_bytes: int = Field(default=50 * 1024 * 1024, ge=1024)
+    max_sheets: int = Field(default=50, ge=1, le=500)
+    max_rows_per_sheet: int = Field(default=100_000, ge=100, le=1_000_000)
+    max_total_cells: int = Field(default=2_000_000, ge=1000, le=100_000_000)
+    max_xlsx_uncompressed_bytes: int = Field(default=250 * 1024 * 1024, ge=1024)
+    max_xlsx_compression_ratio: float = Field(default=100.0, ge=1.0, le=10_000.0)
+    parser_version: str = Field(default="2026.08.25.1", min_length=1, max_length=64)
+    worker_concurrency: int = Field(default=1, ge=1, le=8)
+    worker_poll_seconds: float = Field(default=2.0, ge=0.1, le=60)
+    worker_stale_minutes: int = Field(default=15, ge=1, le=1440)
+    worker_max_attempts: int = Field(default=3, ge=1, le=10)
     footer_markers: list[str] = Field(
         default_factory=lambda: [
             "声明",

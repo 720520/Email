@@ -218,6 +218,11 @@ button { color: inherit; }
 .history-panel__meta { padding: 14px 17px; display: flex; justify-content: space-between; border-radius: 10px; background: #f4f8f7; }
 .history-panel__meta span { color: #798c94; font-size: 11px; }
 .operations-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, .75fr); gap: 20px; }
+.parse-status-grid { margin-bottom: 20px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; }
+.parse-status-card { padding: 18px 20px; display: grid; gap: 7px; }
+.parse-status-card small { color: #7f9097; font-size: 11px; }
+.parse-status-card strong { color: var(--navy-800); font-size: 28px; }
+.parse-status-card--danger strong { color: #b65345; }
 .reparse-panel .el-upload-dragger { min-height: 210px; display: flex; flex-direction: column; justify-content: center; border-color: #cddedb; background: #f8fbfa; }
 .reparse-panel .el-icon--upload { color: var(--teal-600); }
 .source-link-form { margin-top: 24px; }
@@ -229,6 +234,29 @@ button { color: inherit; }
 .audit-rules strong { color: #385561; font-size: 13px; }
 .audit-rules small { color: #829198; font-size: 11px; line-height: 1.6; }
 .result-panel { margin-top: 20px; padding: 24px; display: flex; align-items: center; gap: 18px; }
+.result-detail-panel { margin-top: 20px; overflow: hidden; scroll-margin-top: 20px; }
+.result-detail-panel .result-summary { margin-top: 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; }
+.result-tabs { padding: 0 24px 24px; }
+.result-tabs .el-table { width: 100%; }
+.recent-review-list { max-height: 430px; padding: 8px; overflow: auto; }
+.recent-review-item { width: 100%; padding: 13px 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 0; border-bottom: 1px solid var(--line); color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.recent-review-item:hover { border-radius: 8px; background: #f7f2ec; }
+.recent-review-item > span { min-width: 0; display: grid; gap: 4px; }
+.recent-review-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.recent-review-item small { color: #8c999e; font-size: 10px; }
+.file-issue-list { margin: 18px 24px 0; padding: 12px 14px; display: grid; gap: 8px; border-radius: 8px; background: #fff7ed; }
+.file-issue-list > div { display: flex; align-items: center; gap: 10px; color: #805b3f; font-size: 12px; }
+.review-actions { padding: 18px 24px; display: flex; align-items: center; gap: 12px; }
+.review-actions span { margin-right: auto; color: #7c8b91; font-size: 11px; }
+.review-table { width: calc(100% - 48px); margin: 0 24px 24px; }
+.review-table small { color: #88989e; }
+.review-table .row-error { margin-top: 4px; display: block; color: #bc5949; line-height: 1.4; }
+.parse-task-panel { margin-top: 20px; overflow: hidden; }
+.parse-task-panel > .el-table { width: calc(100% - 48px); margin: 0 24px 24px; }
+.original-value-panel { margin-bottom: 18px; padding: 13px 15px; display: flex; flex-wrap: wrap; gap: 8px 20px; border-radius: 8px; color: #6e7f86; background: #f6f2ec; font-size: 11px; }
+.original-value-panel strong { width: 100%; color: #394e57; }
+.review-edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+.review-edit-grid__wide { grid-column: 1 / -1; }
 .result-panel__icon { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 13px; color: var(--teal-600); background: var(--teal-100); font-size: 24px; }
 .result-panel h2 { margin: 3px 0; font-size: 18px; }
 .result-panel > div > small { color: #87969d; font-size: 10px; }
@@ -296,6 +324,9 @@ button { color: inherit; }
   .member-create-bar { grid-template-columns: 1fr 1fr; }
   .metric-grid { grid-template-columns: repeat(2, 1fr); }
   .overview-grid, .operations-grid { grid-template-columns: 1fr; }
+  .parse-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .review-edit-grid { grid-template-columns: 1fr; }
+  .review-edit-grid__wide { grid-column: auto; }
   .mailbox-details { grid-template-columns: repeat(3, 1fr); }
 }
 
@@ -319,6 +350,7 @@ button { color: inherit; }
   .workflow-strip i { width: 1px; height: 12px; flex: none; margin: 0 0 0 4px; }
   .result-panel { align-items: flex-start; flex-wrap: wrap; }
   .result-metrics { width: 100%; margin-left: 0; justify-content: space-around; }
+  .review-actions { align-items: stretch; flex-direction: column; }
   .mailbox-details { grid-template-columns: repeat(2, 1fr); }
   .mailbox-editor-grid { grid-template-columns: 1fr; }
   .member-create-bar { grid-template-columns: 1fr; }

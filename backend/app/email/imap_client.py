@@ -6,6 +6,8 @@ import hashlib
 import logging
 import ssl
 from datetime import UTC, datetime, timedelta
+from email import policy
+from email.parser import BytesHeaderParser
 from types import TracebackType
 from typing import Any
 
@@ -14,7 +16,7 @@ from imapclient.exceptions import IMAPClientError, LoginError
 
 from app import __version__
 from app.core.config import EmailSettings
-from app.email.models import MailboxMessage
+from app.email.models import MailboxMessage, MailboxMessageMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +157,47 @@ class ImapMailboxGateway:
             internal_date = internal_date.replace(tzinfo=UTC)
         return MailboxMessage(uid=uid, internal_date=internal_date, raw_message=raw_message)
 
+    def fetch_metadata(self, uid: int) -> MailboxMessageMetadata:
+        """仅读取主题、附件结构和邮件大小，不下载完整正文。"""
+
+        client = self._require_client()
+        fields = [
+            b"BODY.PEEK[HEADER.FIELDS (SUBJECT)]",
+            b"BODYSTRUCTURE",
+            b"RFC822.SIZE",
+        ]
+        try:
+            response = client.fetch([uid], fields)
+        except (IMAPClientError, OSError, TimeoutError) as exc:
+            raise MailboxConnectionError(f"获取 IMAP 邮件元数据失败，UID={uid}") from exc
+        message_data = response.get(uid)
+        if not isinstance(message_data, dict):
+            raise MailboxProtocolError(f"IMAP 返回中缺少邮件元数据，UID={uid}")
+        header = self._response_value_containing(message_data, "HEADER.FIELDS")
+        subject = ""
+        if isinstance(header, bytes):
+            subject = str(
+                BytesHeaderParser(policy=policy.default).parsebytes(header).get("Subject") or ""
+            ).strip()
+        structure = self._get_response_value(
+            message_data,
+            (b"BODYSTRUCTURE", "BODYSTRUCTURE"),
+        )
+        raw_size_value = self._get_response_value(
+            message_data,
+            (b"RFC822.SIZE", "RFC822.SIZE"),
+        )
+        try:
+            raw_size = int(raw_size_value) if raw_size_value is not None else None
+        except (TypeError, ValueError):
+            raw_size = None
+        return MailboxMessageMetadata(
+            uid=uid,
+            subject=subject,
+            attachment_names=tuple(self._bodystructure_filenames(structure)),
+            raw_size=raw_size,
+        )
+
     def _validate_configuration(self) -> None:
         if not self.settings.host.strip():
             raise MailboxConfigurationError("未配置 email.host")
@@ -201,6 +244,52 @@ class ImapMailboxGateway:
             if key in message_data:
                 return message_data[key]
         return None
+
+    @staticmethod
+    def _response_value_containing(message_data: dict[Any, Any], marker: str) -> Any:
+        marker = marker.casefold()
+        for key, value in message_data.items():
+            key_text = key.decode("ascii", errors="ignore") if isinstance(key, bytes) else str(key)
+            if marker in key_text.casefold():
+                return value
+        return None
+
+    @classmethod
+    def _bodystructure_filenames(cls, structure: Any) -> list[str]:
+        filenames: list[str] = []
+
+        def visit(value: Any) -> None:
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    if cls._parameter_name(key) in {"name", "filename"}:
+                        decoded = cls._parameter_value(item)
+                        if decoded:
+                            filenames.append(decoded)
+                    visit(item)
+                return
+            if not isinstance(value, (tuple, list)):
+                return
+            for index, item in enumerate(value):
+                if cls._parameter_name(item) in {"name", "filename"} and index + 1 < len(value):
+                    decoded = cls._parameter_value(value[index + 1])
+                    if decoded:
+                        filenames.append(decoded)
+                visit(item)
+
+        visit(structure)
+        return list(dict.fromkeys(filenames))
+
+    @staticmethod
+    def _parameter_name(value: Any) -> str:
+        if isinstance(value, bytes):
+            return value.decode("ascii", errors="ignore").casefold()
+        return str(value).casefold() if isinstance(value, str) else ""
+
+    @staticmethod
+    def _parameter_value(value: Any) -> str:
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace").strip()
+        return value.strip() if isinstance(value, str) else ""
 
     @staticmethod
     def _normalize_uid_validity(value: Any) -> str:

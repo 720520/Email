@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.api.deps import TenantContext, TenantDatabaseSession, TenantScope, require_roles
 from app.api.schemas.email_connection import EmailConnectionTestResponse, EmailSyncResponse
@@ -29,6 +29,7 @@ from app.core.credential_security import (
 from app.core.errors import AppError
 from app.db.models import (
     AppUser,
+    AttachmentParseTask,
     MailboxAccount,
     MailboxUserGrant,
     TenantMembership,
@@ -239,7 +240,13 @@ def sync_mailbox(
         ).run(trigger_type=TriggerType.MANUAL)
     except MailSyncAlreadyRunningError as exc:
         raise AppError("MAIL_SYNC_RUNNING", str(exc), status_code=409) from exc
-    return _sync_response(execution.job_run_id, execution.result)
+    queued_attachment_count = session.scalar(
+        select(func.count(AttachmentParseTask.id)).where(
+            AttachmentParseTask.source_job_run_id == execution.job_run_id,
+            AttachmentParseTask.status == "queued",
+        )
+    ) or 0
+    return _sync_response(execution.job_run_id, execution.result, queued_attachment_count)
 
 
 @router.get("/members", response_model=list[TenantMemberItem])
@@ -444,12 +451,13 @@ def _grant_item(membership, user: AppUser, grant: MailboxUserGrant | None) -> Ma
     )
 
 
-def _sync_response(job_run_id: int, result) -> EmailSyncResponse:
+def _sync_response(job_run_id: int, result, queued_attachment_count: int) -> EmailSyncResponse:
     success = result.fatal_error is None and not result.failed_uids
     message = (
         f"同步完成：发现 {len(result.discovered_uids)} 封，"
         f"新增 {len(result.archived_uids)} 封，"
-        f"已处理 {len(result.duplicate_uids)} 封"
+        f"已处理 {len(result.duplicate_uids)} 封，"
+        f"{queued_attachment_count} 个 Excel 附件已进入解析队列"
         if success
         else result.fatal_error or "部分邮件同步失败，请查看日志"
     )
@@ -463,6 +471,7 @@ def _sync_response(job_run_id: int, result) -> EmailSyncResponse:
         ignored_count=len(result.ignored_uids),
         duplicate_count=len(result.duplicate_uids),
         failed_count=len(result.failed_uids),
+        queued_attachment_count=queued_attachment_count,
     )
 
 

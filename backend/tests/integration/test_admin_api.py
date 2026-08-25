@@ -102,6 +102,38 @@ def _seed_admin_data() -> int:
             attachment_id=attachment.id,
         )
         session.add(nav)
+        session.add_all(
+            [
+                FundNav(
+                    tenant_id=identity.tenant_id,
+                    mailbox_account_id=identity.mailbox_account_id,
+                    product_name="吉余测试一号私募证券投资基金A类",
+                    product_code="JYTEST01(A)",
+                    master_product_code="JYTEST01",
+                    registration_code="JYTEST01",
+                    share_class="A类",
+                    nav_date=date.today(),
+                    unit_nav=Decimal("1.12000000"),
+                    total_nav=Decimal("1.22000000"),
+                    asset_value=Decimal("6000000.0000"),
+                    source_file="A类净值.xlsx",
+                ),
+                FundNav(
+                    tenant_id=identity.tenant_id,
+                    mailbox_account_id=identity.mailbox_account_id,
+                    product_name="吉余测试一号私募证券投资基金C类",
+                    product_code="JYTEST01(C)",
+                    master_product_code="JYTEST01",
+                    registration_code="JYTEST01",
+                    share_class="C类",
+                    nav_date=date.today(),
+                    unit_nav=Decimal("1.11000000"),
+                    total_nav=Decimal("1.21000000"),
+                    asset_value=Decimal("4000000.0000"),
+                    source_file="C类净值.xlsx",
+                ),
+            ]
+        )
         session.add(
             FundProduct(
                 tenant_id=identity.tenant_id,
@@ -264,8 +296,18 @@ async def test_login_and_protected_operational_queries(app: FastAPI) -> None:
     assert history.json()["points"][0]["nav_date"] == date.today().isoformat()
     assert product_summary.json()["product_count"] == 1
     assert product_summary.json()["latest_asset_value"] == "10000000.0000"
-    assert product_list.json()["items"][0]["share_count"] == 1
-    assert product_detail.json()["latest_snapshots"][0]["available_field_count"] >= 9
+    assert product_list.json()["items"][0]["share_count"] == 3
+    assert product_list.json()["items"][0]["summary_source"] == "total_share"
+    assert product_list.json()["items"][0]["unit_nav"] == "1.12345678"
+    assert product_list.json()["items"][0]["latest_source_file"] == "净值.xlsx"
+    assert product_detail.json()["has_share_detail"] is True
+    assert len(product_detail.json()["latest_snapshots"]) == 3
+    total_snapshot = next(
+        item
+        for item in product_detail.json()["latest_snapshots"]
+        if item["share_class"] == "总份额"
+    )
+    assert total_snapshot["available_field_count"] >= 9
     assert product_updated.json()["investment_manager_info"] == "人工经理信息"
     assert product_updated.json()["investment_manager_manual"] is True
     assert product_updated.json()["source_investment_manager_info"] == "附件经理信息"

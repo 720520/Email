@@ -21,6 +21,7 @@ from app.db.models import (
 )
 from app.db.session import DatabaseManager
 from app.services.manual_reparse_service import ManualReparseService
+from app.services.parse_review_service import ParseReviewService
 
 
 def _workbook_bytes() -> bytes:
@@ -85,10 +86,29 @@ def test_manual_upload_is_archived_parsed_and_audited(tmp_path: Path) -> None:
         attachment = session.get(AttachmentRecord, result.attachment_id)
         job = session.scalar(select(JobRun))
         nav_count = session.scalar(select(func.count()).select_from(FundNav))
-    assert result.inserted_count == 1
-    assert nav_count == 1
-    assert nav.product_code == "JYUPLOAD01"
+    assert result.inserted_count == 0
+    assert result.status == "ready"
+    assert result.message == "解析完成，请核对后确认入库"
+    assert len(result.records) == 1
+    assert result.records[0].product_code == "JYUPLOAD01"
+    assert result.issues == ()
+    assert nav_count == 0
+    assert nav is None
     assert attachment.original_name == "人工修正净值.xlsx"
     assert (settings.data_directory / attachment.stored_path).is_file()
     assert job.status == JobStatus.SUCCESS
+
+    committed = ParseReviewService(
+        settings,
+        database.session_factory,
+        tenant_id=1,
+        mailbox_account_id=1,
+        actor_user_id=1,
+        actor_username="operator",
+    ).confirm(result.parse_session_id, role=UserRole.OPERATOR)
+    with database.session_factory() as session:
+        nav = session.scalar(select(FundNav))
+    assert committed.inserted_count == 1
+    assert nav is not None
+    assert nav.product_code == "JYUPLOAD01"
     database.dispose()

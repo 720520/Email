@@ -7,6 +7,10 @@ import unicodedata
 from dataclasses import dataclass
 
 _NAMED_CLASS_PATTERNS = (
+    re.compile(
+        r"^(?P<base>.+?)[_\-\s]*[（(]?(?P<class>[A-Z])(?:类|级)?份额[）)]?$",
+        re.IGNORECASE,
+    ),
     re.compile(r"^(?P<base>.+?)\((?P<class>[ABC])(?:类|级)\)$", re.IGNORECASE),
     re.compile(r"^(?P<base>.+?)(?P<class>[ABC])(?:类|级)$", re.IGNORECASE),
     re.compile(r"^(?P<base>.+(?:基金|计划))(?P<class>[ABC])$", re.IGNORECASE),
@@ -14,6 +18,7 @@ _NAMED_CLASS_PATTERNS = (
 _CODE_CLASS_PATTERN = re.compile(r"\((?P<class>[ABC])(?:类|级)\)$", re.IGNORECASE)
 _TOTAL_CODE_PATTERN = re.compile(r"\(总\)$")
 _CODE_QUALIFIER_PATTERN = re.compile(r"\((?:总|[ABC](?:类|级))\)$", re.IGNORECASE)
+_PLAIN_CODE_CLASS_PATTERN = re.compile(r"(?P<base>.+?)(?P<class>[A-Z])$", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,10 +76,14 @@ def master_product_identity(
     """确定基金主体身份；份额代码保留在净值快照，主档优先采用备案代码。"""
 
     display = fund_display_identity(product_name, product_code)
-    master_code = (
-        registration_code
-        or parent_product_code
-        or _CODE_QUALIFIER_PATTERN.sub("", product_code).strip()
-    )
+    fallback_code = _CODE_QUALIFIER_PATTERN.sub("", product_code).strip()
+    if display.share_class and display.share_class != "总份额":
+        plain_match = _PLAIN_CODE_CLASS_PATTERN.fullmatch(fallback_code)
+        if (
+            plain_match is not None
+            and f"{plain_match.group('class').upper()}类" == display.share_class
+        ):
+            fallback_code = plain_match.group("base")
+    master_code = registration_code or parent_product_code or fallback_code
     master_name = parent_product_name or display.group_name
     return master_code.strip().upper(), master_name.strip()

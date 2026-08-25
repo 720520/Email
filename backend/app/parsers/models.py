@@ -36,6 +36,7 @@ class IssueCode(StrEnum):
     INVALID_NUMBER = "invalid_number"
     DUPLICATE_ROW = "duplicate_row"
     MIXED_WORKBOOK_TYPES = "mixed_workbook_types"
+    RESOURCE_LIMIT_EXCEEDED = "resource_limit_exceeded"
 
 
 @dataclass(frozen=True, slots=True)

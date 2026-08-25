@@ -1,6 +1,7 @@
 """产品要素统计、详情和可编辑说明字段模型。"""
 
 from datetime import date, datetime
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -43,6 +44,8 @@ class FundProductListItem(BaseModel):
     product_name: str
     latest_source_date: date | None
     share_count: int
+    summary_source: Literal["total_share", "single_share", "share_aggregate", "unavailable"]
+    has_share_detail: bool
     unit_nav: str | None
     total_nav: str | None
     asset_value: str | None

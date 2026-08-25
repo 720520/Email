@@ -6,8 +6,13 @@ from pathlib import Path
 from types import TracebackType
 
 from app.core.config import Settings
-from app.email.imap_client import MailboxConnectionError
-from app.email.models import ArchivedEmail, MailboxMessage, ParsedEmail
+from app.email.imap_client import MailboxConnectionError, MailboxProtocolError
+from app.email.models import (
+    ArchivedEmail,
+    MailboxMessage,
+    MailboxMessageMetadata,
+    ParsedEmail,
+)
 from app.services.email_service import EmailSyncService
 
 
@@ -119,10 +124,12 @@ def test_sync_archives_candidates_ignores_other_mail_and_isolates_failure(tmp_pa
     assert first_result.ignored_uids == {2}
     assert first_result.failed_uids == {1}
     assert first_result.fatal_error is None
-    assert second_result.duplicate_uids == {2, 3}
-    assert second_result.failed_uids == {1}
+    assert second_result.duplicate_uids == {1, 2, 3}
+    assert not second_result.failed_uids
     assert len(list((tmp_path / "data").rglob("*.eml"))) == 1
     assert recorder.calls[0]["uid_validity"] == "12345"
+    rejected_state = next((tmp_path / "data" / ".email_uid_state").rglob("1.done.json"))
+    assert '"status": "rejected"' in rejected_state.read_text(encoding="utf-8")
 
 
 def test_connection_failure_retries_with_exponential_backoff(tmp_path: Path) -> None:
@@ -142,3 +149,69 @@ def test_connection_failure_retries_with_exponential_backoff(tmp_path: Path) -> 
     assert result.archived_uids == {9}
     assert delays == [0.5]
     assert result.fatal_error is None
+
+
+def test_metadata_prefilter_skips_full_download_for_irrelevant_mail(tmp_path: Path) -> None:
+    timestamp = datetime(2026, 7, 24, 10, tzinfo=UTC)
+    messages = {
+        2: MailboxMessage(2, timestamp, _raw_email("基金净值", "净值.xlsx")),
+        1: MailboxMessage(1, timestamp, _raw_email("普通通知")),
+    }
+
+    class MetadataGateway(FakeGateway):
+        def __init__(self):
+            super().__init__(messages)
+            self.full_fetches: list[int] = []
+
+        def fetch_metadata(self, uid: int) -> MailboxMessageMetadata:
+            return MailboxMessageMetadata(
+                uid=uid,
+                subject="基金净值" if uid == 2 else "普通通知",
+                attachment_names=("净值.xlsx",) if uid == 2 else (),
+                raw_size=1024,
+            )
+
+        def fetch_message(self, uid: int) -> MailboxMessage:
+            self.full_fetches.append(uid)
+            return super().fetch_message(uid)
+
+    gateway = MetadataGateway()
+    result = EmailSyncService(
+        _settings(tmp_path),
+        gateway_factory=lambda: gateway,
+        archive_recorder=FakeArchiveRecorder(),
+        sleep=lambda _: None,
+    ).sync()
+
+    assert result.archived_uids == {2}
+    assert result.ignored_uids == {1}
+    assert gateway.full_fetches == [2]
+
+
+def test_metadata_protocol_error_falls_back_to_full_message(tmp_path: Path) -> None:
+    timestamp = datetime(2026, 7, 24, 10, tzinfo=UTC)
+    messages = {7: MailboxMessage(7, timestamp, _raw_email("基金净值", "净值.xlsx"))}
+
+    class IncompatibleMetadataGateway(FakeGateway):
+        def __init__(self):
+            super().__init__(messages)
+            self.full_fetches: list[int] = []
+
+        def fetch_metadata(self, uid: int) -> MailboxMessageMetadata:
+            raise MailboxProtocolError(f"invalid BODYSTRUCTURE for {uid}")
+
+        def fetch_message(self, uid: int) -> MailboxMessage:
+            self.full_fetches.append(uid)
+            return super().fetch_message(uid)
+
+    gateway = IncompatibleMetadataGateway()
+    result = EmailSyncService(
+        _settings(tmp_path),
+        gateway_factory=lambda: gateway,
+        archive_recorder=FakeArchiveRecorder(),
+        sleep=lambda _: None,
+    ).sync()
+
+    assert result.archived_uids == {7}
+    assert not result.failed_uids
+    assert gateway.full_fetches == [7]

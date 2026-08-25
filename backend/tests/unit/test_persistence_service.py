@@ -215,6 +215,33 @@ def test_different_nav_dates_are_kept_as_history(
     assert count == 2
 
 
+def test_partial_success_keeps_actionable_error_summary(
+    database: DatabaseManager,
+    tmp_path: Path,
+) -> None:
+    attachment_id = _create_attachment(database, stored_path="partial.xlsx")
+    service = NavPersistenceService()
+    valid = _nav_record(source_file="partial.xlsx")
+    invalid = replace(
+        _nav_record(source_file="partial.xlsx", nav_date=date(2026, 7, 25)),
+        product_code=None,
+    )
+
+    with database.session_factory() as session, session.begin():
+        result = service.persist(
+            session,
+            attachment_id=attachment_id,
+            result=_parse_result(tmp_path / "partial.xlsx", valid, invalid),
+        )
+
+    with database.session_factory() as session:
+        attachment = session.get(AttachmentRecord, attachment_id)
+    assert result.status == AttachmentStatus.PARTIAL_SUCCESS
+    assert result.inserted_count == 1
+    assert result.exception_count == 1
+    assert attachment.error_message == "部分解析成功：新增 1 条，错误 1 条，其中重复 0 条"
+
+
 def test_product_elements_create_master_and_daily_snapshot(
     database: DatabaseManager,
     tmp_path: Path,

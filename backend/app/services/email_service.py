@@ -23,10 +23,15 @@ from app.email.models import (
     EmailSyncError,
     EmailSyncResult,
     MailboxMessage,
+    MailboxMessageMetadata,
     ParsedEmail,
 )
 from app.email.uid_registry import FileUidRegistry
-from app.services.archive_service import EmailArchiveService
+from app.services.archive_service import (
+    AttachmentTooLargeError,
+    EmailArchiveService,
+    EmailResourceLimitError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +52,8 @@ class MailboxGateway(Protocol):
     def search_uids(self) -> list[int]: ...
 
     def fetch_message(self, uid: int) -> MailboxMessage: ...
+
+    def fetch_metadata(self, uid: int) -> MailboxMessageMetadata: ...
 
 
 class ArchiveRecorder(Protocol):
@@ -82,6 +89,9 @@ class EmailSyncService:
             settings.data_directory,
             archive_timezone=settings.storage.archive_timezone,
             max_attachment_bytes=settings.email.max_attachment_bytes,
+            max_attachments_per_email=settings.email.max_attachments_per_email,
+            max_total_attachment_bytes=settings.email.max_total_attachment_bytes,
+            max_raw_message_bytes=settings.email.max_raw_message_bytes,
         )
         self.uid_registry = uid_registry or FileUidRegistry(
             settings.data_directory / ".email_uid_state",
@@ -156,7 +166,42 @@ class EmailSyncService:
         result: EmailSyncResult,
     ) -> None:
         try:
+            metadata_fetch = getattr(mailbox, "fetch_metadata", None)
+            if callable(metadata_fetch):
+                try:
+                    metadata = metadata_fetch(uid)
+                except MailboxProtocolError:
+                    # 元数据预筛选只是性能优化；部分 IMAP 服务返回的 BODYSTRUCTURE
+                    # 不标准时回退到完整邮件，不能让兼容性问题阻断同步。
+                    logger.warning(
+                        "IMAP 邮件元数据格式不兼容，回退到完整邮件下载",
+                        extra={"uid": uid},
+                        exc_info=True,
+                    )
+                else:
+                    if (
+                        metadata.raw_size is not None
+                        and metadata.raw_size > self.settings.email.max_raw_message_bytes
+                    ):
+                        raise EmailResourceLimitError(
+                            "原始邮件超过大小限制 "
+                            f"({metadata.raw_size} > "
+                            f"{self.settings.email.max_raw_message_bytes})"
+                        )
+                    if not self._is_candidate(metadata.subject, list(metadata.attachment_names)):
+                        self.uid_registry.complete(
+                            operation_key,
+                            uid,
+                            {"status": "ignored", "subject": metadata.subject},
+                        )
+                        result.ignored_uids.add(uid)
+                        return
             source = mailbox.fetch_message(uid)
+            if len(source.raw_message) > self.settings.email.max_raw_message_bytes:
+                raise EmailResourceLimitError(
+                    "原始邮件超过大小限制 "
+                    f"({len(source.raw_message)} > {self.settings.email.max_raw_message_bytes})"
+                )
             parsed = self.parser.parse(source)
             attachment_names = [attachment.original_name for attachment in parsed.attachments]
             if not self._is_candidate(parsed.subject, attachment_names):
@@ -195,6 +240,26 @@ class EmailSyncService:
         except MailboxConnectionError:
             self.uid_registry.release(operation_key, uid)
             raise
+        except (AttachmentTooLargeError, EmailResourceLimitError) as exc:
+            # 资源超限是确定性失败，释放预留会导致同一封“毒邮件”在每次同步中
+            # 被重复下载和解析。登记为已拒绝，保留失败统计但不再自动重试。
+            self.uid_registry.complete(
+                operation_key,
+                uid,
+                {
+                    "status": "rejected",
+                    "error_type": type(exc).__name__,
+                    "message": str(exc),
+                },
+            )
+            result.failed_uids.add(uid)
+            result.errors.append(
+                EmailSyncError(uid=uid, error_type=type(exc).__name__, message=str(exc))
+            )
+            logger.warning(
+                "邮件因资源限制被拒绝，后续同步不再重复处理",
+                extra={"uid": uid, "error_type": type(exc).__name__},
+            )
         except Exception as exc:
             self.uid_registry.release(operation_key, uid)
             result.failed_uids.add(uid)

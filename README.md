@@ -25,6 +25,8 @@
   使用独立 JWT、短期文件 URL 和租户校验；Document Server 停机时仍可下载。
 - 产品中心已整合产品台账与净值明细：支持卡片/表格视图、A/B/C 份额归纳、
   指定日期净值更新状态、待更新筛选和历史净值查询。
+- 邮件同步与 Excel 解析已解耦：同步只归档并创建持久化解析任务，独立 Worker
+  负责限流解析、失败重试和状态统计；人工上传先进入可编辑暂存区，经复核确认后入库。
 - 租户备案资料库已开放：管理员可维护动态文本/文件字段，普通用户可复制和下载；
   文件采用不可变版本，字段变更、文件上传、下载与资料导出均写入审计链。
 
@@ -48,8 +50,8 @@
 迁移并启动前后端。首次启动会在终端中要求创建管理员，密码至少 10 位且
 输入时不显示。启动成功后会打开 <http://127.0.0.1:5173>。
 
-服务在后台运行，日志位于 `logs/backend.log`、`logs/frontend.log`
-和 `logs/report-worker.log`。停止服务：
+服务在后台运行，日志位于 `logs/backend.log`、`logs/frontend.log`、
+`logs/report-worker.log` 和 `logs/parse-worker.log`。停止服务：
 
 ```bash
 ./一键启动.sh --stop
@@ -240,6 +242,15 @@ pnpm.cmd dev
 .\.venv\Scripts\python.exe -m app.cli.mail_sync --mailbox-id 2
 ```
 
+邮件同步只完成候选邮件和附件归档。Excel 解析由独立 Worker 消费数据库队列；
+一键启动器会自动启动它，手工部署时需另开一个终端运行：
+
+```powershell
+.\.venv\Scripts\python.exe -m app.cli.attachment_parse_worker
+```
+
+使用 `--once` 可在当前队列清空后退出，适合定时任务或部署验收。
+
 同步完成后的推荐操作顺序：
 
 1. 在“运营概览”确认今日邮件数、解析成功数和待处理异常。
@@ -248,7 +259,8 @@ pnpm.cmd dev
 4. 在“产品要素”查看按备案代码归并的产品主体、A/B/C/总份额和最新 21 项托管字段；
    经理、策略缺失或需要修订时可进入详情人工编辑，表格字段不可人工改写。
 5. 在“异常管理”复核缺字段、空净值、重复数据和格式错误；点击异常右侧“查看”可核对其原始邮件。
-6. 附件解析失败时，在“人工处理”上传原 Excel 重新解析。
+6. 附件解析失败时，在“解析与人工复核”查看任务状态或重试；人工上传的 Excel
+   会先生成逐行暂存结果，可修正、忽略、处理重复冲突并重新校验，确认后才写入正式台账。
 7. 在“基金净值”页面选择业务日期并导出每日汇总 Excel。
 
 也可以通过命令行导出指定日期：
@@ -356,9 +368,11 @@ Outlook / Microsoft 365 若租户要求现代认证，可将 `auth_mode` 改为 
 .\.venv\Scripts\python.exe -m app.cli.mail_sync
 ```
 
-同步过程不会修改邮件已读状态。候选邮件先按主题、附件名和 Excel 扩展名初筛，再归档到
-`data/tenants/{tenant_id}/mailboxes/{mailbox_account_id}/YYYY/MM/DD`；归档成功后会验证
-附件 SHA-256，调用解析器并把带相同租户/邮箱作用域的净值与异常写入数据库。
+同步过程不会修改邮件已读状态。系统先读取主题、附件结构和邮件大小做轻量初筛，只有候选
+邮件才下载完整正文；不兼容元数据预取的 IMAP 服务会自动回退到完整邮件。候选邮件归档到
+`data/tenants/{tenant_id}/mailboxes/{mailbox_account_id}/YYYY/MM/DD` 后，只创建持久化解析
+任务。独立 Worker 随后验证附件 SHA-256、调用解析器，并把相同租户/邮箱作用域的净值与
+异常写入数据库。超过资源上限的邮件登记为 `rejected`，避免每轮同步重复下载“毒邮件”。
 
 ## Excel 格式兼容
 
@@ -798,8 +812,8 @@ Email/
 1. 根据登录租户和邮箱授权读取默认 `MailboxAccount`，解密当前邮箱凭据。
 2. 获取“租户 + 邮箱”进程内互斥锁，只阻止同一邮箱并发同步。
 3. 新建带租户、邮箱和触发用户的 `job_run`，状态设为 `running`。
-4. 组装带相同作用域的 `EmailSyncService`、`DatabaseArchiveRecorder`、
-   `AttachmentProcessingService` 和 `ExcelParserService`。
+4. 组装带相同作用域的 `EmailSyncService` 和 `DatabaseArchiveRecorder`；同步进程不创建
+   Excel 解析器，也不等待附件解析。
 5. 执行同步并根据成功、部分成功或失败回写 `job_run` 和审计事件。
 6. 无论成功或异常都释放互斥锁。
 
@@ -932,7 +946,9 @@ ArchivedEmail
      └─ archived / unsupported
 ```
 
-只有 `.xls` 和 `.xlsx` 被标记为 `archived` 并进入解析；其他附件保留为 `unsupported`，不会丢失。
+只有 `.xls` 和 `.xlsx` 被标记为 `pending`，并在同一数据库事务中创建唯一的
+`attachment_parse_task`；其他附件保留为 `unsupported`，不会丢失。Worker 原子抢占
+`queued` 任务，异常时退避重试；启动时会回收超时任务并关闭对应的遗留 `job_run`。
 
 ## Excel 附件字段提取与标准化（重点）
 
@@ -996,7 +1012,9 @@ multipart/mixed
 | `D0 CF 11 E0 A1 B1 1A E1` | OLE `.xls` | `xlrd` |
 | 其他 | 不支持或伪装文件 | 生成格式异常 |
 
-所有工作表通过 `pandas.read_excel(sheet_name=None, header=None, dtype=object)` 读取。`header=None` 很重要：系统先保留原始网格，再自行寻找表头，不假设表头一定在第一行。
+系统先读取工作表清单，再逐个使用 `pandas.read_excel(header=None, dtype=object)` 加载，
+并在每个 Sheet 后累计行数、列数和总单元格数。`header=None` 很重要：系统先保留原始网格，
+再自行寻找表头，不假设表头一定在第一行；逐表加载也避免一次性把整个工作簿展开到内存。
 
 ### 3. 字段字典
 
@@ -1285,8 +1303,8 @@ StandardNavRecord
 ### 状态汇总
 
 ```text
-附件 archived
-  └─ 开始解析 → parsing
+解析任务 queued
+  └─ Worker 原子抢占 → running；附件 pending → parsing
       ├─ 全部有效并有新增数据 → success
       ├─ 有新增数据且存在错误 → partial_success
       ├─ 全部是重复数据 → duplicate
@@ -1310,11 +1328,14 @@ flowchart LR
     B --> C["校验扩展名、大小和来源附件 ID"]
     C --> D["归档 manual_*.xls/xlsx"]
     D --> E["创建模拟 email_record 和 attachment_record"]
-    E --> F["AttachmentProcessingService"]
-    F --> G["与邮件附件完全相同的 Excel 解析和入库链"]
+    E --> F["ExcelParserService 生成 ParseSession / ParseResultRow"]
+    F --> G["人工查看、逐行修正、重新校验"]
+    G --> H["确认后写入正式 FundNav 台账"]
 ```
 
-人工上传不会覆盖原附件；系统创建独立任务、邮件审计记录和新附件记录。可选的 `source_attachment_id` 只用于说明替代来源，最终仍遵守 `(产品代码, 日期)` 唯一规则。
+人工上传不会覆盖原附件；系统创建独立任务、邮件审计记录和新附件记录。可选的
+`source_attachment_id` 只用于说明替代来源。解析结果确认前不写正式台账；重复记录必须
+明确选择保留或替换，替换历史净值仅管理员可确认，并保存完整修订快照和审计原因。
 
 ## 原始邮件查看数据流
 

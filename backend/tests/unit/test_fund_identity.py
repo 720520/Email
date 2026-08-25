@@ -10,6 +10,9 @@ def test_recognize_share_class_from_name_and_code() -> None:
     assert fund_display_identity("吉余示例基金B类", "T001").share_class == "B类"
     assert fund_display_identity("吉余示例基金", "T001(A级)").share_class == "A类"
     assert fund_display_identity("吉余示例基金A", "T001A").share_class == "A类"
+    identity = fund_display_identity("吉余示例基金_A类份额", "T001A")
+    assert identity.group_name == "吉余示例基金"
+    assert identity.share_class == "A类"
 
 
 def test_sort_share_classes_next_to_base_fund() -> None:
@@ -42,3 +45,13 @@ def test_master_identity_prefers_registration_code_over_share_or_ta_code() -> No
 
     assert code == "SAVH33"
     assert name == "吉余牡丹私募证券投资基金"
+
+
+def test_master_identity_removes_plain_share_code_suffix() -> None:
+    code, name = master_product_identity(
+        product_name="吉余全球易一号私募证券投资基金_B类份额",
+        product_code="AYW68B",
+    )
+
+    assert code == "AYW68"
+    assert name == "吉余全球易一号私募证券投资基金"

@@ -17,6 +17,16 @@ class MailboxMessage:
 
 
 @dataclass(frozen=True, slots=True)
+class MailboxMessageMetadata:
+    """候选预筛所需的轻量 IMAP 元数据。"""
+
+    uid: int
+    subject: str
+    attachment_names: tuple[str, ...]
+    raw_size: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class EmailAttachment:
     """从 MIME 邮件中解码出的附件。"""
 
@@ -97,4 +107,3 @@ class EmailSyncResult:
             "errors": [asdict(error) for error in self.errors],
             "fatal_error": self.fatal_error,
         }
-

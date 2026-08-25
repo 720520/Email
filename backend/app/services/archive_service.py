@@ -27,6 +27,10 @@ class AttachmentTooLargeError(ValueError):
     """附件超过配置的安全上限。"""
 
 
+class EmailResourceLimitError(ValueError):
+    """邮件或附件集合超过安全上限。"""
+
+
 class EmailArchiveService:
     """按邮件接收日期写入 EML、附件和审计清单。"""
 
@@ -36,12 +40,18 @@ class EmailArchiveService:
         *,
         archive_timezone: str,
         max_attachment_bytes: int,
+        max_attachments_per_email: int = 30,
+        max_total_attachment_bytes: int = 100 * 1024 * 1024,
+        max_raw_message_bytes: int = 100 * 1024 * 1024,
         tenant_id: int | None = None,
         mailbox_account_id: int | None = None,
     ) -> None:
         self.data_directory = data_directory
         self.timezone = ZoneInfo(archive_timezone)
         self.max_attachment_bytes = max_attachment_bytes
+        self.max_attachments_per_email = max_attachments_per_email
+        self.max_total_attachment_bytes = max_total_attachment_bytes
+        self.max_raw_message_bytes = max_raw_message_bytes
         self.tenant_id = tenant_id
         self.mailbox_account_id = mailbox_account_id
 
@@ -51,7 +61,7 @@ class EmailArchiveService:
         source: MailboxMessage,
         parsed: ParsedEmail,
     ) -> ArchivedEmail:
-        self._validate_attachments(parsed)
+        self._validate_resources(source, parsed)
         receive_time = parsed.receive_time
         if receive_time.tzinfo is None:
             receive_time = receive_time.replace(tzinfo=UTC)
@@ -129,7 +139,20 @@ class EmailArchiveService:
             attachments=tuple(archived_attachments),
         )
 
-    def _validate_attachments(self, parsed: ParsedEmail) -> None:
+    def _validate_resources(self, source: MailboxMessage, parsed: ParsedEmail) -> None:
+        if len(source.raw_message) > self.max_raw_message_bytes:
+            raise EmailResourceLimitError(
+                f"原始邮件超过大小限制 ({len(source.raw_message)} > {self.max_raw_message_bytes})"
+            )
+        if len(parsed.attachments) > self.max_attachments_per_email:
+            raise EmailResourceLimitError(
+                f"附件数量超过限制 ({len(parsed.attachments)} > {self.max_attachments_per_email})"
+            )
+        total_bytes = sum(len(item.content) for item in parsed.attachments)
+        if total_bytes > self.max_total_attachment_bytes:
+            raise EmailResourceLimitError(
+                f"附件总大小超过限制 ({total_bytes} > {self.max_total_attachment_bytes})"
+            )
         for attachment in parsed.attachments:
             if len(attachment.content) > self.max_attachment_bytes:
                 raise AttachmentTooLargeError(

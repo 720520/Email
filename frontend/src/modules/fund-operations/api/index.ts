@@ -20,6 +20,11 @@ import type {
   FundProductSummary,
   LatestFundNavDate,
   ManualReparseResult,
+  ParseCommitResult,
+  ParseReviewRowUpdate,
+  ParseReviewSession,
+  ParseTaskItem,
+  ParseTaskSummary,
   MailboxAccount,
   MailboxAccountPayload,
   MailboxGrant,
@@ -167,4 +172,41 @@ export async function uploadForReparse(
   if (sourceAttachmentId) body.append('source_attachment_id', String(sourceAttachmentId))
   if (mailboxAccountId) body.append('mailbox_account_id', String(mailboxAccountId))
   return (await http.post<ManualReparseResult>('/operations/manual-reparse', body)).data
+}
+
+export async function getRecentParseSessions() {
+  return (await http.get<ParseReviewSession[]>('/operations/parse-sessions/recent')).data
+}
+
+export async function getParseSession(id: number) {
+  return (await http.get<ParseReviewSession>(`/operations/parse-sessions/${id}`)).data
+}
+
+export async function updateParseResultRow(
+  sessionId: number,
+  rowId: number,
+  payload: ParseReviewRowUpdate,
+) {
+  return (
+    await http.patch<ParseReviewSession>(
+      `/operations/parse-sessions/${sessionId}/rows/${rowId}`,
+      payload,
+    )
+  ).data
+}
+
+export async function validateParseSession(id: number) {
+  return (await http.post<ParseReviewSession>(`/operations/parse-sessions/${id}/validate`)).data
+}
+
+export async function confirmParseSession(id: number) {
+  return (await http.post<ParseCommitResult>(`/operations/parse-sessions/${id}/confirm`)).data
+}
+
+export async function getParseTaskSummary() {
+  return (await http.get<ParseTaskSummary>('/operations/parse-tasks/summary')).data
+}
+
+export async function retryParseTask(id: number) {
+  return (await http.post<ParseTaskItem>(`/operations/parse-tasks/${id}/retry`)).data
 }

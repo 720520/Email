@@ -90,7 +90,7 @@ def product_summary(
 def nav_update_status(
     session: TenantDatabaseSession,
     scope: TenantScope,
-    nav_date: date = Query(),
+    nav_date: Annotated[date, Query()],
 ) -> FundProductNavUpdateSummary:
     del scope
     products = list(
@@ -346,8 +346,12 @@ def _list_item(session: Session, product: FundProduct) -> FundProductListItem:
         id=product.id,
         product_code=product.product_code,
         product_name=product.product_name,
-        latest_source_date=product.latest_source_date,
+        # 主档的 latest_source_* 可能来自同租户内另一个未授权邮箱。列表层只使用
+        # 当前作用域可见的净值快照，避免跨邮箱泄露附件名称或更新时间。
+        latest_source_date=rows[0].nav_date if rows else None,
         share_count=len(rows),
+        summary_source=_summary_source(rows),
+        has_share_detail=bool(rows),
         unit_nav=_decimal_text(representative.unit_nav if representative else None),
         total_nav=_decimal_text(representative.total_nav if representative else None),
         asset_value=_decimal_text(_representative_value(rows, "asset_value")),
@@ -357,7 +361,7 @@ def _list_item(session: Session, product: FundProduct) -> FundProductListItem:
         investment_strategy_info=product.investment_strategy_info,
         investment_manager_manual=product.investment_manager_manual,
         investment_strategy_manual=product.investment_strategy_manual,
-        latest_source_file=product.latest_source_file,
+        latest_source_file=representative.source_file if representative else None,
         inception_date=_profile_text(profile, "inception_date"),
         strategy_category=_profile_text(profile, "strategy_category"),
         manager_name=_profile_text(profile, "manager_name"),
@@ -380,6 +384,16 @@ def _detail(session: Session, product: FundProduct) -> FundProductDetail:
         update_time=product.update_time,
         latest_snapshots=[_snapshot_item(item) for item in rows],
     )
+
+
+def _summary_source(rows: list[FundNav]) -> str:
+    if not rows:
+        return "unavailable"
+    if any(item.share_class == "总份额" for item in rows):
+        return "total_share"
+    if len(rows) == 1:
+        return "single_share"
+    return "share_aggregate"
 
 
 def _snapshot_item(item: FundNav) -> FundProductSnapshotItem:

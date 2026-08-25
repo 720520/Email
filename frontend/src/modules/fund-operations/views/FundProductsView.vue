@@ -39,6 +39,7 @@ const total = ref(0)
 const summary = ref<FundProductSummary>()
 const detail = ref<FundProductDetail>()
 const detailVisible = ref(false)
+const selectedSnapshotId = ref<number>()
 const editVisible = ref(false)
 const filters = reactive({ keyword: '', page: 1, pageSize: 20 })
 const viewMode = ref<'cards' | 'table'>('cards')
@@ -105,21 +106,6 @@ function statusType(status?: string) {
   return status === 'updated' ? 'success' : status === 'partial' ? 'warning' : 'danger'
 }
 
-function shareLabel(code: string, index: number) {
-  const match = code.match(/(?:[-_\s]|^)([ABC])(?:类)?$/i) ?? code.match(/([ABC])$/i)
-  return match ? `${match[1]!.toUpperCase()}类` : `份额${index + 1}`
-}
-
-function expectedShares(status?: FundProductNavUpdateItem) {
-  if (!status) return []
-  const codes = [...status.updated_share_codes, ...status.missing_share_codes]
-  return [...new Set(codes)].map((code, index) => ({
-    code,
-    label: shareLabel(code, index),
-    updated: status.updated_share_codes.includes(code),
-  }))
-}
-
 function search() { filters.page = 1; void loadRows() }
 function reset() { filters.keyword = ''; filters.page = 1; void loadRows() }
 
@@ -127,7 +113,11 @@ async function showDetail(id: number) {
   detailVisible.value = true
   detailLoading.value = true
   detail.value = undefined
-  try { detail.value = await getFundProduct(id) }
+  selectedSnapshotId.value = undefined
+  try {
+    detail.value = await getFundProduct(id)
+    selectedSnapshotId.value = detail.value.latest_snapshots[0]?.id
+  }
   catch (error) { ElMessage.error(apiErrorMessage(error)) }
   finally { detailLoading.value = false }
 }
@@ -180,6 +170,19 @@ async function restoreSource(field: 'manager' | 'strategy') {
 
 function snapshotLabel(item: FundProductSnapshot) {
   return item.share_class ? `${item.share_class} · ${item.product_code}` : item.product_code
+}
+
+const selectedSnapshot = computed(() => detail.value?.latest_snapshots.find(
+  (item) => item.id === selectedSnapshotId.value,
+))
+
+function summarySourceLabel(source?: FundProductItem['summary_source']) {
+  return ({
+    total_share: '总份额原值',
+    single_share: '单份额',
+    share_aggregate: '分类份额汇总',
+    unavailable: '暂无可靠总值',
+  } as Record<string, string>)[source ?? ''] ?? '暂无可靠总值'
 }
 
 watch(() => filters.pageSize, search)
@@ -245,16 +248,7 @@ onMounted(() => {
           <el-tag :type="statusType(productStatus(row.id)?.status)" effect="plain">{{ statusLabel(productStatus(row.id)?.status) }}</el-tag>
         </header>
         <div class="product-card-meta"><span><small>管理人</small><strong>{{ row.manager_name || '—' }}</strong></span><span><small>托管/外包</small><strong>{{ row.custodian_name || '—' }}</strong></span></div>
-        <div class="share-summary">
-          <div class="share-summary__head"><span>{{ statusDate }} 份额更新</span><strong>{{ productStatus(row.id)?.updated_share_count ?? 0 }} / {{ productStatus(row.id)?.expected_share_count ?? row.share_count }}</strong></div>
-          <div class="share-tags">
-            <el-tooltip v-for="share in expectedShares(productStatus(row.id))" :key="share.code" :content="share.code">
-              <span :class="share.updated ? 'is-updated' : 'is-missing'">{{ share.label }}<i>{{ share.updated ? '✓' : '待' }}</i></span>
-            </el-tooltip>
-            <span v-if="!expectedShares(productStatus(row.id)).length" class="is-missing">待获取份额<i>待</i></span>
-          </div>
-        </div>
-        <footer><span><small>最新净值</small><strong class="numeric">{{ row.unit_nav ?? (row.share_count > 1 ? '多份额' : '—') }}</strong></span><span><small>最近更新</small><strong class="numeric">{{ productStatus(row.id)?.latest_update_date || '—' }}</strong></span><el-button text type="primary" :icon="View">查看详情</el-button></footer>
+        <footer><span><small>总平层净值</small><strong class="numeric">{{ row.unit_nav ?? (row.share_count > 1 ? '详见份额' : '—') }}</strong></span><span><small>{{ summarySourceLabel(row.summary_source) }}</small><strong class="numeric">{{ productStatus(row.id)?.latest_update_date || '—' }}</strong></span><el-button text type="primary" :icon="View">查看详情</el-button></footer>
       </article>
       <el-empty v-if="!visibleRows.length" description="当前条件下没有产品" />
     </section>
@@ -267,7 +261,7 @@ onMounted(() => {
         <el-table-column label="最新估值日" width="122"><template #default="{ row }"><span class="numeric">{{ row.latest_source_date ?? '—' }}</span></template></el-table-column>
         <el-table-column label="份额" width="76" align="center"><template #default="{ row }"><el-tag size="small" type="info">{{ row.share_count }}</el-tag></template></el-table-column>
         <el-table-column label="更新状态" width="110"><template #default="{ row }"><el-tag :type="statusType(productStatus(row.id)?.status)">{{ statusLabel(productStatus(row.id)?.status) }}</el-tag></template></el-table-column>
-        <el-table-column label="单位 / 累计净值" width="150" align="right"><template #default="{ row }"><strong class="numeric">{{ row.unit_nav ?? '多份额' }}</strong><small class="cell-secondary numeric">{{ row.total_nav ?? '—' }}</small></template></el-table-column>
+        <el-table-column label="总平层净值" width="150" align="right"><template #default="{ row }"><strong class="numeric">{{ row.unit_nav ?? (row.share_count > 1 ? '详见份额' : '—') }}</strong><small class="cell-secondary">{{ summarySourceLabel(row.summary_source) }}</small></template></el-table-column>
         <el-table-column label="资产净值" width="160" align="right"><template #default="{ row }"><span class="numeric">{{ formatMoney(row.asset_value) }}</span></template></el-table-column>
         <el-table-column label="实收资本" width="160" align="right"><template #default="{ row }"><span class="numeric">{{ formatMoney(row.paid_in_capital) }}</span></template></el-table-column>
         <el-table-column label="经理 / 策略" width="140" align="center">
@@ -308,23 +302,38 @@ onMounted(() => {
           </section>
 
           <section class="snapshot-section">
-            <div class="snapshot-section__header"><h3>最新托管要素快照</h3><span>{{ detail.latest_source_date }} · {{ detail.latest_snapshots.length }} 个份额</span></div>
+            <div class="snapshot-section__header">
+              <div><h3>份额明细</h3><span>{{ detail.latest_source_date }} · {{ detail.latest_snapshots.length }} 个份额</span></div>
+            </div>
             <el-empty v-if="!detail.latest_snapshots.length" description="暂无可见快照" />
-            <el-tabs v-else type="border-card">
-              <el-tab-pane v-for="item in detail.latest_snapshots" :key="item.id" :label="snapshotLabel(item)">
-                <div class="field-completeness">本附件 21 项字段中有值 {{ item.available_field_count }} 项；空值仍按原表留空，不做推断。</div>
+            <template v-else>
+              <div v-if="detail.latest_snapshots.length > 1" class="share-picker" role="list" aria-label="产品份额列表">
+                <button
+                  v-for="item in detail.latest_snapshots"
+                  :key="item.id"
+                  type="button"
+                  :class="{ active: selectedSnapshotId === item.id }"
+                  @click="selectedSnapshotId = item.id"
+                >
+                  <strong>{{ snapshotLabel(item) }}</strong>
+                  <small>{{ item.nav_date }} · 点击查看详情</small>
+                </button>
+              </div>
+              <div v-if="selectedSnapshot" class="share-detail-panel">
+                <div class="field-completeness">本附件 21 项字段中有值 {{ selectedSnapshot.available_field_count }} 项；空值仍按原表留空，不做推断。</div>
                 <el-descriptions :column="3" border size="small">
-                  <el-descriptions-item label="日期">{{ item.nav_date }}</el-descriptions-item><el-descriptions-item label="资产代码">{{ text(item.asset_code) }}</el-descriptions-item><el-descriptions-item label="资产名称">{{ item.product_name }}</el-descriptions-item>
-                  <el-descriptions-item label="份额净值">{{ text(item.unit_nav) }}</el-descriptions-item><el-descriptions-item label="累计净值">{{ text(item.total_nav) }}</el-descriptions-item><el-descriptions-item label="资产净值">{{ formatMoney(item.asset_value) }}</el-descriptions-item>
-                  <el-descriptions-item label="实收资本">{{ formatMoney(item.paid_in_capital) }}</el-descriptions-item><el-descriptions-item label="持有份额">{{ formatMoney(item.holding_shares) }}</el-descriptions-item><el-descriptions-item label="参考市值">{{ formatMoney(item.reference_market_value) }}</el-descriptions-item>
-                  <el-descriptions-item label="总资产">{{ formatMoney(item.total_assets) }}</el-descriptions-item><el-descriptions-item label="总资产/净资产">{{ formatRatio(item.total_assets_nav_ratio) }}</el-descriptions-item><el-descriptions-item label="资产份额">{{ formatMoney(item.asset_share) }}</el-descriptions-item>
-                  <el-descriptions-item label="投资者名称">{{ text(item.investor_name) }}</el-descriptions-item><el-descriptions-item label="投资者基金账号">{{ text(item.investor_account) }}</el-descriptions-item><el-descriptions-item label="协会备案代码">{{ text(item.registration_code) }}</el-descriptions-item>
-                  <el-descriptions-item label="母基金单位净值">{{ text(item.parent_unit_nav) }}</el-descriptions-item><el-descriptions-item label="母基金累计净值">{{ text(item.parent_total_nav) }}</el-descriptions-item><el-descriptions-item label="母基金资产净值">{{ formatMoney(item.parent_asset_value) }}</el-descriptions-item>
-                  <el-descriptions-item label="母基金产品代码">{{ text(item.parent_product_code) }}</el-descriptions-item><el-descriptions-item label="母基金产品名称">{{ text(item.parent_product_name) }}</el-descriptions-item><el-descriptions-item label="母基金实收资本">{{ formatMoney(item.parent_paid_in_capital) }}</el-descriptions-item>
-                  <el-descriptions-item label="备注" :span="3">{{ text(item.notes) }}</el-descriptions-item><el-descriptions-item label="来源附件" :span="3">{{ item.source_file }}</el-descriptions-item>
+                  <el-descriptions-item label="日期">{{ selectedSnapshot.nav_date }}</el-descriptions-item><el-descriptions-item label="资产代码">{{ text(selectedSnapshot.asset_code) }}</el-descriptions-item><el-descriptions-item label="资产名称">{{ selectedSnapshot.product_name }}</el-descriptions-item>
+                  <el-descriptions-item label="份额净值">{{ text(selectedSnapshot.unit_nav) }}</el-descriptions-item><el-descriptions-item label="累计净值">{{ text(selectedSnapshot.total_nav) }}</el-descriptions-item><el-descriptions-item label="资产净值">{{ formatMoney(selectedSnapshot.asset_value) }}</el-descriptions-item>
+                  <el-descriptions-item label="实收资本">{{ formatMoney(selectedSnapshot.paid_in_capital) }}</el-descriptions-item><el-descriptions-item label="持有份额">{{ formatMoney(selectedSnapshot.holding_shares) }}</el-descriptions-item><el-descriptions-item label="参考市值">{{ formatMoney(selectedSnapshot.reference_market_value) }}</el-descriptions-item>
+                  <el-descriptions-item label="总资产">{{ formatMoney(selectedSnapshot.total_assets) }}</el-descriptions-item><el-descriptions-item label="总资产/净资产">{{ formatRatio(selectedSnapshot.total_assets_nav_ratio) }}</el-descriptions-item><el-descriptions-item label="资产份额">{{ formatMoney(selectedSnapshot.asset_share) }}</el-descriptions-item>
+                  <el-descriptions-item label="投资者名称">{{ text(selectedSnapshot.investor_name) }}</el-descriptions-item><el-descriptions-item label="投资者基金账号">{{ text(selectedSnapshot.investor_account) }}</el-descriptions-item><el-descriptions-item label="协会备案代码">{{ text(selectedSnapshot.registration_code) }}</el-descriptions-item>
+                  <el-descriptions-item label="母基金单位净值">{{ text(selectedSnapshot.parent_unit_nav) }}</el-descriptions-item><el-descriptions-item label="母基金累计净值">{{ text(selectedSnapshot.parent_total_nav) }}</el-descriptions-item><el-descriptions-item label="母基金资产净值">{{ formatMoney(selectedSnapshot.parent_asset_value) }}</el-descriptions-item>
+                  <el-descriptions-item label="母基金产品代码">{{ text(selectedSnapshot.parent_product_code) }}</el-descriptions-item><el-descriptions-item label="母基金产品名称">{{ text(selectedSnapshot.parent_product_name) }}</el-descriptions-item><el-descriptions-item label="母基金实收资本">{{ formatMoney(selectedSnapshot.parent_paid_in_capital) }}</el-descriptions-item>
+                  <el-descriptions-item label="备注" :span="3">{{ text(selectedSnapshot.notes) }}</el-descriptions-item><el-descriptions-item label="来源附件" :span="3">{{ selectedSnapshot.source_file }}</el-descriptions-item>
                 </el-descriptions>
-              </el-tab-pane>
-            </el-tabs>
+              </div>
+              <el-empty v-else description="点击一个份额查看托管字段" :image-size="72" />
+            </template>
           </section>
         </template>
       </div>
@@ -374,16 +383,6 @@ onMounted(() => {
 .product-card-meta > span { min-width: 0; padding: 10px; display: grid; gap: 4px; border-radius: 8px; background: #f5f0e8; }
 .product-card-meta small,.product-ledger-card footer small { color: #8e8b82; font-size: 9px; }
 .product-card-meta strong { overflow: hidden; color: #3d3d3a; font-size: 11px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-.share-summary { min-width: 0; max-width: 100%; padding: 12px; overflow: hidden; border-radius: 9px; background: #181715; color: #faf9f5; }
-.share-summary__head { margin-bottom: 10px; display: flex; justify-content: space-between; color: #a09d96; font-size: 10px; }
-.share-summary__head span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.share-summary__head strong { flex: 0 0 auto; margin-left: 8px; }
-.share-summary__head strong { color: #faf9f5; font-size: 12px; }
-.share-tags { display: flex; flex-wrap: wrap; gap: 6px; }
-.share-tags > span { padding: 5px 7px; display: inline-flex; align-items: center; gap: 5px; border-radius: 6px; background: #252320; color: #d4d0c9; font-size: 10px; }
-.share-tags > span i { font-style: normal; color: #78c48a; }
-.share-tags > span.is-missing { background: #3a2422; color: #f2c7c4; }
-.share-tags > span.is-missing i { color: #e18b85; }
 .product-ledger-card footer { min-width: 0; display: grid; grid-template-columns: minmax(84px, 1fr) minmax(100px, 1fr) auto; align-items: end; gap: 12px; }
 .product-ledger-card footer > span { min-width: 0; display: grid; gap: 3px; }
 .product-ledger-card footer strong { color: #252523; font-size: 12px; font-weight: 500; }
@@ -393,6 +392,12 @@ onMounted(() => {
 .profile-section__header, .snapshot-section__header { margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; }
 .profile-section h3, .snapshot-section h3 { margin: 0; color: var(--ink-900); font-size: 16px; }
 .profile-section__header p, .snapshot-section__header span { margin: 4px 0 0; color: #87969d; font-size: 11px; }
+.share-picker { margin-bottom: 14px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.share-picker button { min-width: 0; padding: 13px; display: grid; gap: 5px; border: 1px solid #e6dfd8; border-radius: 9px; color: #3d3d3a; background: #fffefa; text-align: left; cursor: pointer; }
+.share-picker button:hover, .share-picker button.active { border-color: #cc785c; background: #fbf0eb; }
+.share-picker strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-picker small { color: #87969d; }
+.share-detail-panel { padding-top: 2px; }
 .profile-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .profile-grid article { padding: 16px; border: 1px solid #e6dfd8; border-radius: 12px; background: #f5f0e8; }
 .profile-grid header { display: flex; justify-content: space-between; gap: 10px; }
@@ -402,6 +407,6 @@ onMounted(() => {
 .field-hint { margin-top: 5px; color: #87969d; font-size: 11px; }
 @media (max-width: 1180px) { .product-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 900px) { .product-metrics, .profile-grid { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 620px) { .product-metrics, .profile-grid, .product-card-grid { grid-template-columns: 1fr; } }
+@media (max-width: 620px) { .product-metrics, .profile-grid, .product-card-grid, .share-picker { grid-template-columns: 1fr; } }
 @media (max-width: 420px) { .product-ledger-card footer { grid-template-columns: 1fr 1fr; } .product-ledger-card footer .el-button { grid-column: 1 / -1; justify-self: start; } }
 </style>

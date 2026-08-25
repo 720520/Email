@@ -45,7 +45,13 @@ def dashboard(session: TenantDatabaseSession, scope: TenantScope) -> DashboardRe
             EmailRecord.status == EmailStatus.SUCCESS,
         )
     ) or 0
-    fund_count = session.scalar(select(func.count(distinct(FundNav.product_code)))) or 0
+    fund_count = session.scalar(
+        select(
+            func.count(
+                distinct(func.coalesce(FundNav.master_product_code, FundNav.product_code))
+            )
+        )
+    ) or 0
     open_exception_count = session.scalar(
         select(func.count(ExceptionRecord.id)).where(
             ExceptionRecord.status == ExceptionStatus.OPEN

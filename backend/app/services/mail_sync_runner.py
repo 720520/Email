@@ -16,9 +16,7 @@ from app.db.models import JobRun, JobStatus, JobType, MailboxAccount, TriggerTyp
 from app.db.session import configure_tenant_scope
 from app.email.models import EmailSyncResult
 from app.email.uid_registry import FileUidRegistry
-from app.parsers.service import ExcelParserService
 from app.services.archive_service import EmailArchiveService
-from app.services.attachment_processing_service import AttachmentProcessingService
 from app.services.audit_service import AuditService
 from app.services.email_service import EmailSyncService
 from app.services.persistence_service import DatabaseArchiveRecorder
@@ -80,13 +78,6 @@ class MailSyncRunner:
             lock.release()
 
     def _build_service(self, job_run_id: int) -> EmailSyncService:
-        attachment_processor = AttachmentProcessingService(
-            self.session_factory,
-            data_directory=self.settings.data_directory,
-            parser=ExcelParserService(self.runtime_settings),
-            tenant_id=self.tenant_id,
-            mailbox_account_id=self.mailbox_account_id,
-        )
         recorder = DatabaseArchiveRecorder(
             self.session_factory,
             data_directory=self.settings.data_directory,
@@ -94,7 +85,7 @@ class MailSyncRunner:
             tenant_id=self.tenant_id,
             mailbox_account_id=self.mailbox_account_id,
             job_run_id=job_run_id,
-            attachment_processor=attachment_processor,
+            parse_max_attempts=self.settings.excel.worker_max_attempts,
         )
         scoped_root = (
             self.settings.data_directory
@@ -110,6 +101,9 @@ class MailSyncRunner:
                 self.settings.data_directory,
                 archive_timezone=self.settings.storage.archive_timezone,
                 max_attachment_bytes=self.runtime_settings.email.max_attachment_bytes,
+                max_attachments_per_email=self.runtime_settings.email.max_attachments_per_email,
+                max_total_attachment_bytes=self.runtime_settings.email.max_total_attachment_bytes,
+                max_raw_message_bytes=self.runtime_settings.email.max_raw_message_bytes,
                 tenant_id=self.tenant_id,
                 mailbox_account_id=self.mailbox_account_id,
             ),

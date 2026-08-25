@@ -891,8 +891,8 @@ onUnmounted(() => {
 .data-note { margin: 8px 0 0; color: var(--ink-600); font-size: 12px; text-align: right; }
 .field-panel, .run-panel, .batch-panel, .design-panel { margin-top: 18px; }
 .design-actions { display: flex; gap: 8px; }
-.design-workspace { min-height: 680px; display: grid; grid-template-columns: 280px minmax(0, 1fr); border-top: 1px solid var(--line); }
-.placeholder-panel { max-height: 680px; padding: 14px; overflow: auto; border-right: 1px solid var(--line); background: #f5f0e8; }
+.design-workspace { display: grid; grid-template-columns: 280px minmax(0, 1fr); align-items: stretch; border-top: 1px solid var(--line); background: #efe9de; }
+.placeholder-panel { height: 100%; padding: 14px; overflow: auto; box-sizing: border-box; border-right: 1px solid var(--line); background: #f5f0e8; }
 .placeholder-panel h3 { margin: 18px 2px 8px; color: var(--navy-800); font-size: 13px; }
 .placeholder-item { width: 100%; padding: 9px 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--ink-900); cursor: pointer; text-align: left; }
 .placeholder-item:hover { border-color: var(--line); background: #fffefa; }
@@ -900,11 +900,12 @@ onUnmounted(() => {
 .placeholder-item strong, .placeholder-item small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .placeholder-item strong { font-size: 12px; }
 .placeholder-item small { color: var(--ink-600); font-size: 10px; }
-.pptx-frame-shell { min-width: 0; min-height: 680px; position: relative; background: #efe9de; }
+.pptx-frame-shell { min-width: 0; position: relative; background: #efe9de; }
+.pptx-frame-shell > .el-empty { min-height: 360px; }
 .pptx-frame { width: 100%; height: 680px; display: block; border: 0; }
 .design-mode-toolbar { height: 48px; padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--line); background: #fffefa; }
 .design-mode-toolbar > :last-child { margin-left: auto; }
-.layout-editor { min-height: 632px; padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr) 210px; align-items: start; gap: 18px; overflow: auto; }
+.layout-editor { padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr) 210px; align-items: start; gap: 18px; overflow: auto; }
 .slide-canvas { width: min(100%, 900px); aspect-ratio: 16 / 9; position: relative; overflow: hidden; border: 1px solid #d8cec5; border-radius: 4px; background: #fff; box-shadow: 0 12px 32px rgba(48,38,30,.12); }
 .slide-canvas::after { content: '将字段拖到这里'; position: absolute; inset: 50% auto auto 50%; transform: translate(-50%, -50%); color: #bdc9cc; font-size: 13px; pointer-events: none; }
 .layout-field { z-index: 2; position: absolute; padding: 5px 7px; overflow: hidden; border: 1px dashed #23a69a; background: rgba(232,250,247,.92); cursor: move; user-select: none; touch-action: none; white-space: nowrap; text-overflow: ellipsis; }

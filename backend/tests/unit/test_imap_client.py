@@ -48,8 +48,24 @@ class FakeImapClient:
         return [2, 7, 4]
 
     def fetch(self, uids, fields):
-        del fields
         uid = uids[0]
+        if b"BODYSTRUCTURE" in fields:
+            return {
+                uid: {
+                    b"BODY[HEADER.FIELDS (SUBJECT)]": "Subject: 基金净值\r\n\r\n".encode(),
+                    b"BODYSTRUCTURE": (
+                        b"APPLICATION",
+                        b"VND.OPENXMLFORMATS-OFFICEDOCUMENT.SPREADSHEETML.SHEET",
+                        (b"NAME", "净值表.xlsx".encode()),
+                        None,
+                        None,
+                        b"BASE64",
+                        100,
+                        (b"ATTACHMENT", (b"FILENAME", "净值表.xlsx".encode())),
+                    ),
+                    b"RFC822.SIZE": 2048,
+                }
+            }
         return {
             uid: {
                 b"BODY[]": b"Subject: test\r\n\r\nbody",
@@ -117,6 +133,23 @@ def test_imap_gateway_supports_outlook_oauth2(monkeypatch) -> None:
     client = FakeImapClient.instances[0]
     assert client.oauth2_logged_in_with == ("operations@example.com", "short-lived-token")
     assert client.logged_in_with is None
+
+
+def test_imap_gateway_fetches_lightweight_candidate_metadata(monkeypatch) -> None:
+    FakeImapClient.instances.clear()
+    monkeypatch.setattr(imap_client, "IMAPClient", FakeImapClient)
+    settings = EmailSettings(
+        host="imap.example.com",
+        username="operations@example.com",
+        password="authorization-code",
+    )
+
+    with ImapMailboxGateway(settings) as gateway:
+        metadata = gateway.fetch_metadata(7)
+
+    assert metadata.subject == "基金净值"
+    assert metadata.attachment_names == ("净值表.xlsx",)
+    assert metadata.raw_size == 2048
 
 
 def test_imap_gateway_skips_client_id_when_server_does_not_advertise_it(

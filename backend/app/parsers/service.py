@@ -24,6 +24,7 @@ from app.parsers.workbook_reader import (
     UnsupportedWorkbookFormatError,
     WorkbookReader,
     WorkbookReadError,
+    WorkbookResourceLimitError,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ class ExcelParserService:
         registry: FieldAliasRegistry | None = None,
     ) -> None:
         self.settings = settings or get_settings()
-        self.reader = reader or WorkbookReader()
+        self.reader = reader or WorkbookReader(self.settings.excel)
         self.registry = registry or FieldAliasRegistry.from_yaml(
             self.settings.excel_field_alias_file
         )
@@ -69,6 +70,11 @@ class ExcelParserService:
             return result
         except WorkbookReadError as exc:
             result.issues.append(self._file_issue(result, IssueCode.WORKBOOK_READ_ERROR, str(exc)))
+            return result
+        except WorkbookResourceLimitError as exc:
+            result.issues.append(
+                self._file_issue(result, IssueCode.RESOURCE_LIMIT_EXCEEDED, str(exc))
+            )
             return result
 
         if not sheets:

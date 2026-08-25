@@ -30,7 +30,14 @@ from app.core.credential_security import (
     dedicated_credential_key_configured,
 )
 from app.core.errors import AppError
-from app.db.models import EmailRecord, EmailStatus, MailboxAccount, TriggerType, UserRole
+from app.db.models import (
+    AttachmentParseTask,
+    EmailRecord,
+    EmailStatus,
+    MailboxAccount,
+    TriggerType,
+    UserRole,
+)
 from app.db.session import get_database_manager
 from app.services.archive_service import sanitize_filename
 from app.services.audit_service import AuditService
@@ -157,11 +164,18 @@ def sync_email_now(
     except MailSyncAlreadyRunningError as exc:
         raise AppError("MAIL_SYNC_RUNNING", str(exc), status_code=409) from exc
     result = execution.result
+    queued_attachment_count = session.scalar(
+        select(func.count(AttachmentParseTask.id)).where(
+            AttachmentParseTask.source_job_run_id == execution.job_run_id,
+            AttachmentParseTask.status == "queued",
+        )
+    ) or 0
     success = result.fatal_error is None and not result.failed_uids
     message = (
         f"同步完成：发现 {len(result.discovered_uids)} 封，"
         f"新增 {len(result.archived_uids)} 封，"
-        f"已处理 {len(result.duplicate_uids)} 封"
+        f"已处理 {len(result.duplicate_uids)} 封，"
+        f"{queued_attachment_count} 个 Excel 附件已进入解析队列"
         if success
         else result.fatal_error or "部分邮件同步失败，请查看日志"
     )
@@ -175,6 +189,7 @@ def sync_email_now(
         ignored_count=len(result.ignored_uids),
         duplicate_count=len(result.duplicate_uids),
         failed_count=len(result.failed_uids),
+        queued_attachment_count=queued_attachment_count,
     )
 
 

@@ -18,12 +18,20 @@ const labels: Record<string, string> = {
   open: '待处理',
   resolved: '已解决',
   ignored: '已忽略',
+  queued: '等待解析',
+  running: '正在解析',
+  ready: '校验通过',
+  review_required: '待复核',
+  invalid: '待修正',
+  committed: '已入库',
+  kept_existing: '保留已有',
+  replaced: '已更正',
 }
 
 const tagType = computed(() => {
-  if (['success', 'resolved'].includes(props.status)) return 'success'
-  if (['failed', 'open'].includes(props.status)) return 'danger'
-  if (['partial_success', 'duplicate', 'ignored'].includes(props.status)) return 'warning'
+  if (['success', 'resolved', 'ready', 'committed', 'replaced'].includes(props.status)) return 'success'
+  if (['failed', 'open', 'invalid'].includes(props.status)) return 'danger'
+  if (['partial_success', 'duplicate', 'ignored', 'review_required', 'kept_existing'].includes(props.status)) return 'warning'
   return 'info'
 })
 </script>

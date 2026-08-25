@@ -383,6 +383,12 @@ try {
         Write-Host "Frontend is already running." -ForegroundColor Yellow
     }
 
+    Write-Step "Starting report and attachment parsing workers"
+    $reportWorkerCommand = "`$Host.UI.RawUI.WindowTitle='Fund NAV Report Worker'; Set-Location -LiteralPath '$escapedRoot'; & '$escapedPython' -m app.cli.report_batch_worker"
+    Start-Process -FilePath $shell -ArgumentList @("-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $reportWorkerCommand)
+    $parseWorkerCommand = "`$Host.UI.RawUI.WindowTitle='Fund NAV Parse Worker'; Set-Location -LiteralPath '$escapedRoot'; & '$escapedPython' -m app.cli.attachment_parse_worker"
+    Start-Process -FilePath $shell -ArgumentList @("-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $parseWorkerCommand)
+
     Write-Step "Waiting for the web console"
     $ready = $false
     $deadline = [DateTime]::UtcNow.AddSeconds(60)

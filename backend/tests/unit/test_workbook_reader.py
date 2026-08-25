@@ -1,11 +1,14 @@
 from pathlib import Path
+from zipfile import ZipFile
 
 import pandas as pd
 import pytest
 
+from app.core.config import ExcelSettings
 from app.parsers.workbook_reader import (
     UnsupportedWorkbookFormatError,
     WorkbookReader,
+    WorkbookResourceLimitError,
 )
 
 
@@ -23,13 +26,25 @@ def test_select_engine_by_file_signature_not_filename(
     expected_engine: str,
 ) -> None:
     source = tmp_path / "misleading-name.bin"
-    source.write_bytes(signature)
+    if signature.startswith(b"PK"):
+        with ZipFile(source, "w") as archive:
+            archive.writestr("dummy.xml", "ok")
+    else:
+        source.write_bytes(signature)
     calls = []
 
-    def fake_read_excel(path, **kwargs):
-        calls.append((path, kwargs))
-        return {"Sheet1": pd.DataFrame([["ok"]])}
+    class FakeExcelFile:
+        sheet_names = ["Sheet1"]
 
+    def fake_excel_file(path, **kwargs):
+        calls.append((path, kwargs))
+        return FakeExcelFile()
+
+    def fake_read_excel(workbook, **kwargs):
+        assert isinstance(workbook, FakeExcelFile)
+        return pd.DataFrame([["ok"]])
+
+    monkeypatch.setattr(pd, "ExcelFile", fake_excel_file)
     monkeypatch.setattr(pd, "read_excel", fake_read_excel)
 
     sheets = WorkbookReader().read(source)
@@ -45,3 +60,10 @@ def test_reject_unknown_binary_format(tmp_path: Path) -> None:
     with pytest.raises(UnsupportedWorkbookFormatError):
         WorkbookReader().read(source)
 
+
+def test_reject_workbook_over_file_size_limit(tmp_path: Path) -> None:
+    source = tmp_path / "oversized.xlsx"
+    source.write_bytes(b"PK\x03\x04" + b"x" * 2048)
+
+    with pytest.raises(WorkbookResourceLimitError, match="工作簿超过大小限制"):
+        WorkbookReader(ExcelSettings(max_workbook_bytes=1024)).read(source)

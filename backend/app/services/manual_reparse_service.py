@@ -29,8 +29,8 @@ from app.db.models import (
 from app.db.session import configure_tenant_scope
 from app.parsers.service import ExcelParserService
 from app.services.archive_service import sanitize_filename
-from app.services.attachment_processing_service import AttachmentProcessingService
 from app.services.audit_service import AuditService
+from app.services.parse_review_service import ParseReviewService
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +39,17 @@ logger = logging.getLogger(__name__)
 class ManualReparseResult:
     email_id: int
     attachment_id: int
+    parse_session_id: int
     inserted_count: int
     duplicate_count: int
     exception_count: int
-    status: AttachmentStatus
+    valid_count: int
+    invalid_count: int
+    status: str
     source_file: str
+    message: str
+    records: tuple[object, ...]
+    issues: tuple[dict, ...]
 
 
 class ManualReparseService:
@@ -65,13 +71,7 @@ class ManualReparseService:
         self.actor_username = actor_username
         self.audit = AuditService(audit_signing_key(settings.security))
         self.timezone = ZoneInfo(settings.storage.archive_timezone)
-        self.processor = AttachmentProcessingService(
-            session_factory,
-            data_directory=settings.data_directory,
-            parser=ExcelParserService(settings),
-            tenant_id=tenant_id,
-            mailbox_account_id=mailbox_account_id,
-        )
+        self.parser = ExcelParserService(settings)
 
     def process(
         self,
@@ -127,18 +127,41 @@ class ManualReparseService:
                 now=now,
                 source_attachment_id=source_attachment_id,
             )
-            persisted = self.processor.process(attachment_id)
-            if persisted is None:
-                raise RuntimeError("人工上传附件未进入解析流程")
-            self._finish_job(job_run_id, persisted.status)
+            parse_result = self.parser.parse_file(stored_path)
+            review_service = ParseReviewService(
+                self.settings,
+                self.session_factory,
+                tenant_id=self.tenant_id,
+                mailbox_account_id=self.mailbox_account_id,
+                actor_user_id=self.actor_user_id,
+                actor_username=self.actor_username,
+            )
+            parse_session_id = review_service.create_session(
+                attachment_id=attachment_id,
+                source_attachment_id=source_attachment_id,
+                result=parse_result,
+            )
+            review, records = review_service.get_session(parse_session_id)
+            issues = tuple(review.file_issues) + tuple(
+                issue
+                for row in records
+                for issue in row.issues
+            )
+            self._finish_review_job(job_run_id, review.status, review.row_count)
             return ManualReparseResult(
                 email_id=email_id,
                 attachment_id=attachment_id,
-                inserted_count=persisted.inserted_count,
-                duplicate_count=persisted.duplicate_count,
-                exception_count=persisted.exception_count,
-                status=persisted.status,
+                parse_session_id=parse_session_id,
+                inserted_count=0,
+                duplicate_count=review.duplicate_count,
+                exception_count=len(issues),
+                valid_count=review.valid_count,
+                invalid_count=review.invalid_count,
+                status=review.status,
                 source_file=filename,
+                message=self._result_message(review.status),
+                records=records,
+                issues=issues,
             )
         except Exception as exc:
             self._mark_job_failed(job_run_id, str(exc))
@@ -221,24 +244,17 @@ class ManualReparseService:
             session.flush()
             return email.id, attachment.id
 
-    def _finish_job(self, job_run_id: int, status: AttachmentStatus) -> None:
-        success = status == AttachmentStatus.SUCCESS
-        partial = status in {AttachmentStatus.PARTIAL_SUCCESS, AttachmentStatus.DUPLICATE}
+    def _finish_review_job(self, job_run_id: int, status: str, row_count: int) -> None:
+        successful = status in {"ready", "review_required"}
         with self.session_factory() as session, session.begin():
             self._scope(session)
             job = session.get(JobRun, job_run_id)
             if job is None:
                 raise RuntimeError("人工解析任务记录不存在")
             job.finished_at = datetime.now(UTC)
-            job.status = (
-                JobStatus.SUCCESS
-                if success
-                else JobStatus.PARTIAL_SUCCESS
-                if partial
-                else JobStatus.FAILED
-            )
-            job.success_count = 1 if success else 0
-            job.failure_count = 0 if success else 1
+            job.status = JobStatus.SUCCESS if successful else JobStatus.PARTIAL_SUCCESS
+            job.success_count = row_count
+            job.failure_count = 0 if successful else 1
             self.audit.append(
                 session,
                 tenant_id=self.tenant_id,
@@ -248,7 +264,8 @@ class ManualReparseService:
                 action="attachment.reparse.finish",
                 resource_type="job_run",
                 resource_id=job.id,
-                outcome=job.status.value,
+                outcome=status,
+                detail={"staged_row_count": row_count, "awaiting_confirmation": True},
             )
 
     def _mark_job_failed(self, job_run_id: int, message: str) -> None:
@@ -295,3 +312,11 @@ class ManualReparseService:
             tenant_id=self.tenant_id,
             mailbox_ids=(self.mailbox_account_id,),
         )
+
+    @staticmethod
+    def _result_message(status: str) -> str:
+        return {
+            "ready": "解析完成，请核对后确认入库",
+            "review_required": "解析完成，存在重复数据，请选择处理方式",
+            "invalid": "解析完成，但存在需要人工修正的数据",
+        }.get(status, "解析完成，等待人工复核")
