@@ -104,7 +104,11 @@ step "停止旧服务"
 ./scripts/start.sh --stop || true
 
 step "准备运行环境并迁移数据库"
-./scripts/start.sh --setup-only
+setup_args=(--setup-only)
+if ((!SKIP_TESTS)); then
+  setup_args+=(--with-dev)
+fi
+./scripts/start.sh "${setup_args[@]}"
 
 if ((!SKIP_TESTS)); then
   step "执行部署前检查"

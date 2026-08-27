@@ -26,6 +26,7 @@ FRONTEND_HOST="${FUND_NAV_FRONTEND_HOST:-127.0.0.1}"
 FRONTEND_MODE="${FUND_NAV_FRONTEND_MODE:-dev}"
 
 SETUP_ONLY=0
+WITH_DEV=0
 NO_BROWSER=0
 STOP_ONLY=0
 ADMIN_USERNAME="admin"
@@ -41,6 +42,7 @@ usage() {
 
   --no-browser           启动后不自动打开浏览器
   --setup-only           只安装依赖、生成密钥和迁移数据库
+  --with-dev             同时安装测试依赖（供部署前检查使用）
   --admin-username NAME  首次创建的管理员用户名（默认 admin）
   --stop                 停止由本脚本启动的前后端服务
   -h, --help             显示帮助
@@ -51,6 +53,7 @@ while (($#)); do
   case "$1" in
     --no-browser) NO_BROWSER=1 ;;
     --setup-only) SETUP_ONLY=1 ;;
+    --with-dev) WITH_DEV=1 ;;
     --stop) STOP_ONLY=1 ;;
     --admin-username)
       (($# >= 2)) || die "--admin-username 需要用户名"
@@ -154,13 +157,17 @@ ensure_python_environment() {
 ensure_backend_dependencies() {
   local project_file="$PROJECT_ROOT/backend/pyproject.toml"
   local marker="$VENV_DIR/.fund-nav-pyproject.sha256"
-  local expected installed=""
+  local expected installed="" import_check install_target
   expected="$(sha256sum "$project_file" | awk '{print $1}')"
   [[ -f "$marker" ]] && read -r installed < "$marker"
+  import_check='import alembic, cryptography, fastapi, imapclient, openpyxl, pandas, sqlalchemy, uvicorn, xlrd'
+  install_target="$PROJECT_ROOT/backend"
+  if ((WITH_DEV)); then
+    import_check+=', httpx, pytest'
+    install_target="$PROJECT_ROOT/backend[dev]"
+  fi
 
-  if "$VENV_PYTHON" -c \
-    'import alembic, cryptography, fastapi, imapclient, openpyxl, pandas, sqlalchemy, uvicorn, xlrd' \
-    >/dev/null 2>&1; then
+  if "$VENV_PYTHON" -c "$import_check" >/dev/null 2>&1; then
     if [[ "$installed" == "$expected" ]]; then
       return
     fi
@@ -174,7 +181,7 @@ ensure_backend_dependencies() {
   step "安装后端依赖"
   ensure_uv
   UV_CACHE_DIR="$PROJECT_ROOT/.cache/uv" "$UV" pip install \
-    --python "$VENV_PYTHON" -e "$PROJECT_ROOT/backend"
+    --python "$VENV_PYTHON" -e "$install_target"
   printf '%s\n' "$expected" > "$marker"
 }
 
