@@ -161,15 +161,30 @@ async function loadMembers() {
 }
 
 async function addMember() {
-  if (!selectedTenant.value || !memberForm.username.trim()) {
+  if (!selectedTenant.value) return
+  const username = memberForm.username.trim()
+  const password = memberForm.password
+  if (!username) {
     ElMessage.warning('请填写用户名')
+    return
+  }
+  if (username.length < 3 || username.length > 100) {
+    ElMessage.warning('用户名长度必须在 3 到 100 个字符之间')
+    return
+  }
+  if (password && (password.length < 6 || password.length > 256)) {
+    ElMessage.warning('初始密码长度必须在 6 到 256 个字符之间')
+    return
+  }
+  if (!isPlatformAdmin.value && !password) {
+    ElMessage.warning('租户管理员添加新用户时必须设置初始密码')
     return
   }
   saving.value = true
   try {
     await createTenantMember(selectedTenant.value.id, {
-      username: memberForm.username.trim(),
-      password: memberForm.password || undefined,
+      username,
+      password: password || undefined,
       role: memberForm.role,
     })
     memberForm.username = ''
@@ -281,15 +296,15 @@ onMounted(load)
 
     <el-dialog v-model="membersVisible" :title="`${selectedTenant?.name ?? ''} · 成员管理`" width="900px">
       <div class="member-create-bar">
-        <el-input v-model="memberForm.username" placeholder="用户名" />
-        <el-input v-model="memberForm.password" type="password" show-password :placeholder="isPlatformAdmin ? '新用户初始密码；已有用户留空' : '新用户初始密码'" />
+        <el-input v-model="memberForm.username" minlength="3" maxlength="100" placeholder="用户名（3–100 位）" />
+        <el-input v-model="memberForm.password" type="password" show-password minlength="6" maxlength="256" :placeholder="isPlatformAdmin ? '新用户至少 6 位；已有用户留空' : '新用户初始密码（至少 6 位）'" />
         <el-select v-model="memberForm.role">
           <el-option v-for="(label, role) in roleLabels" :key="role" :label="label" :value="role" />
         </el-select>
         <el-button type="primary" :loading="saving" @click="addMember">添加成员</el-button>
       </div>
       <p class="member-create-help">
-        新用户名至少设置 10 位初始密码；{{ isPlatformAdmin ? '输入系统内已有用户名时仅建立租户成员关系，不修改原密码。' : '跨租户关联已有登录身份只能由平台管理员执行。' }}
+        新用户名至少设置 6 位初始密码；{{ isPlatformAdmin ? '输入系统内已有用户名时仅建立租户成员关系，不修改原密码。' : '跨租户关联已有登录身份只能由平台管理员执行。' }}
       </p>
       <el-table v-loading="memberLoading" :data="members" max-height="440">
         <el-table-column label="用户" min-width="190">

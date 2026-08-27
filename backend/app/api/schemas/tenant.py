@@ -39,8 +39,15 @@ class TenantSummary(BaseModel):
 
 class TenantMemberCreate(BaseModel):
     username: str = Field(min_length=3, max_length=100)
-    password: SecretStr | None = Field(default=None, min_length=10, max_length=256)
+    password: SecretStr | None = Field(default=None, min_length=6, max_length=256)
     role: UserRole = UserRole.VIEWER
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def normalize_username(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip().casefold()
+        return value
 
 
 class TenantMemberUpdate(BaseModel):

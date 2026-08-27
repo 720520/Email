@@ -56,6 +56,10 @@ Docker Compose v2、启用开机启动并启动 OnlyOffice；首次会要求系�
 应注销并重新登录一次。暂时不需要在线预览时可使用 `--skip-onlyoffice`。
 OnlyOffice 镜像默认从 Docker Hub 拉取；公司网络无法访问 Docker Hub 时，镜像失败不会
 阻断核心系统启动，可通过 `ONLYOFFICE_IMAGE=公司镜像地址 ./一键部署.sh` 使用内部镜像。
+正式部署会将 OnlyOffice 的 8080 端口监听到内网网卡，并自动把浏览器访问地址设置为
+`http://部署机内网IP:8080`，避免内网客户端错误访问自己的 `127.0.0.1`。使用 HTTPS
+反向代理时，可通过 `FUND_NAV_ONLYOFFICE__PUBLIC_URL=https://文档服务域名` 覆盖该地址；
+也可通过 `ONLYOFFICE_BIND_ADDRESS` 显式限制容器监听地址。
 
 测试耗时较长时，可在已经单独完成验收的发布版本上使用 `./一键部署.sh --skip-tests`。
 首次部署仍需预先安装 Git、curl、Python 3.11/3.12、Node.js 22/24 LTS；

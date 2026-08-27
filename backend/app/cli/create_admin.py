@@ -26,6 +26,9 @@ def main() -> int:
     if password != confirmation:
         print("两次输入的密码不一致")
         return 2
+    if len(password) < 10:
+        print("平台管理员密码至少需要 10 个字符")
+        return 2
 
     settings = get_settings()
     configure_logging(settings)

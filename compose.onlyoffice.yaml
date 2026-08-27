@@ -4,7 +4,7 @@ services:
     container_name: fund-nav-onlyoffice
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8080:80"
+      - "${ONLYOFFICE_BIND_ADDRESS:-127.0.0.1}:8080:80"
     environment:
       JWT_ENABLED: "true"
       JWT_SECRET: "${FUND_NAV_ONLYOFFICE__JWT_SECRET:?OnlyOffice JWT secret is required}"

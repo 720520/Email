@@ -6,7 +6,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from app.core.config import get_settings
-from app.db.models import AuditEvent, UserRole
+from app.db.models import AppUser, AuditEvent, TenantMembership, UserRole
 from app.db.session import get_database_manager
 from app.services.auth_service import AuthService
 from app.services.foundation_service import FoundationService
@@ -198,3 +198,63 @@ async def test_rejects_removing_the_only_tenant_admin(app: FastAPI) -> None:
 
     assert only_admin.status_code == 409
     assert only_admin.json()["error"]["code"] == "TENANT_LAST_ADMIN"
+
+
+async def test_member_validation_and_permissions_fail_closed(app: FastAPI) -> None:
+    _, default_tenant_id = _seed_platform_admin()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        await client.post(
+            "/api/v1/auth/login",
+            json={"username": "platform_admin", "password": "PlatformAdmin!2026"},
+        )
+        operator = await client.post(
+            f"/api/v1/tenants/{default_tenant_id}/members",
+            json={
+                "username": "tenant_operator",
+                "password": "TenantOperator!2026",
+                "role": "operator",
+            },
+        )
+        short_username = await client.post(
+            f"/api/v1/tenants/{default_tenant_id}/members",
+            json={"username": " a ", "password": "LongEnough!2026", "role": "viewer"},
+        )
+        short_password = await client.post(
+            f"/api/v1/tenants/{default_tenant_id}/members",
+            json={"username": "valid_viewer", "password": "12345", "role": "viewer"},
+        )
+        six_character_password = await client.post(
+            f"/api/v1/tenants/{default_tenant_id}/members",
+            json={"username": "six_char_viewer", "password": "123456", "role": "viewer"},
+        )
+        await client.post("/api/v1/auth/logout")
+        await client.post(
+            "/api/v1/auth/login",
+            json={"username": "tenant_operator", "password": "TenantOperator!2026"},
+        )
+        forbidden = await client.post(
+            f"/api/v1/tenants/{default_tenant_id}/members",
+            json={
+                "username": "must_not_be_created",
+                "password": "MustNotExist!2026",
+                "role": "admin",
+            },
+        )
+
+    assert operator.status_code == 201
+    assert short_username.status_code == 422
+    assert short_password.status_code == 422
+    assert six_character_password.status_code == 201
+    assert forbidden.status_code == 403
+    with get_database_manager().session_factory() as session:
+        assert session.scalar(
+            select(AppUser).where(AppUser.username == "must_not_be_created")
+        ) is None
+        assert session.scalar(
+            select(TenantMembership)
+            .join(AppUser, TenantMembership.user_id == AppUser.id)
+            .where(AppUser.username == "must_not_be_created")
+            .execution_options(skip_tenant_scope=True)
+        ) is None

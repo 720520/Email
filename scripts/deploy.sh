@@ -159,10 +159,22 @@ fi
 step "构建前端"
 (cd frontend && "$INSTALL_DIR/scripts/pnpm.sh" build)
 
+lan_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+onlyoffice_public_url="${FUND_NAV_ONLYOFFICE__PUBLIC_URL:-http://127.0.0.1:8080}"
+onlyoffice_bind_address="${ONLYOFFICE_BIND_ADDRESS:-127.0.0.1}"
+if ((!SKIP_ONLYOFFICE)) && [[ -n "$lan_ip" ]]; then
+  [[ -n "${FUND_NAV_ONLYOFFICE__PUBLIC_URL:-}" ]] \
+    || onlyoffice_public_url="http://$lan_ip:8080"
+  [[ -n "${ONLYOFFICE_BIND_ADDRESS:-}" ]] \
+    || onlyoffice_bind_address="0.0.0.0"
+fi
+
 step "重启服务"
 FUND_NAV_BACKEND_HOST=0.0.0.0 FUND_NAV_FRONTEND_HOST=0.0.0.0 \
   FUND_NAV_FRONTEND_MODE=preview \
   FUND_NAV_SKIP_ONLYOFFICE="$SKIP_ONLYOFFICE" \
+  FUND_NAV_ONLYOFFICE__PUBLIC_URL="$onlyoffice_public_url" \
+  ONLYOFFICE_BIND_ADDRESS="$onlyoffice_bind_address" \
   ./scripts/start.sh --no-browser
 
 step "验证服务"
@@ -171,10 +183,12 @@ curl -fsS --max-time 5 http://127.0.0.1:8000/api/v1/health/live >/dev/null \
 curl -fsS --max-time 5 http://127.0.0.1:5173 >/dev/null \
   || die "前端健康检查失败，请查看 logs/frontend.log"
 
-lan_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
 success "部署完成，版本：${new_commit:0:12}"
 printf '本机访问：http://127.0.0.1:5173\n'
 if [[ -n "$lan_ip" ]]; then
   printf '内网访问：http://%s:5173\n' "$lan_ip"
+  if ((!SKIP_ONLYOFFICE)); then
+    printf 'OnlyOffice：http://%s:8080\n' "$lan_ip"
+  fi
 fi
 printf '本次备份：%s\n' "$backup_dir"

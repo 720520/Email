@@ -20,6 +20,15 @@ def test_password_hasher_never_stores_plaintext_and_verifies() -> None:
     assert hasher.verify("anything", "broken-hash") is False
 
 
+def test_password_hasher_accepts_six_characters() -> None:
+    hasher = PasswordHasher()
+    encoded = hasher.hash("123456")
+
+    assert hasher.verify("123456", encoded) is True
+    with pytest.raises(ValueError, match="至少需要 6"):
+        hasher.hash("12345")
+
+
 def test_session_token_detects_tampering_and_expiration() -> None:
     now = datetime(2026, 7, 29, 10, tzinfo=UTC)
     service = SessionTokenService("a-secure-test-secret-key-123456", ttl_minutes=60)

@@ -26,8 +26,8 @@ class PasswordHasher:
     dklen = 64
 
     def hash(self, password: str) -> str:
-        if len(password) < 10:
-            raise ValueError("密码至少需要 10 个字符")
+        if len(password) < 6:
+            raise ValueError("密码至少需要 6 个字符")
         salt = secrets.token_bytes(16)
         digest = self._derive(password, salt)
         return "$".join(
