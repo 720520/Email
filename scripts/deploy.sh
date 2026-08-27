@@ -120,17 +120,12 @@ new_commit="$(git rev-parse "origin/$BRANCH")"
 printf '当前版本：%s\n目标版本：%s\n' "${old_commit:0:12}" "${new_commit:0:12}"
 
 timestamp="$(date +%Y%m%d-%H%M%S)"
-backup_dir="$BACKUP_ROOT/$timestamp"
-mkdir -p "$backup_dir"
+
+step "停止旧服务以冻结业务数据"
+./scripts/start.sh --stop || true
 
 step "备份业务数据和本地配置"
-for path in data .env config/config.local.yaml; do
-  if [[ -e "$path" ]]; then
-    mkdir -p "$backup_dir/$(dirname -- "$path")"
-    cp -a "$path" "$backup_dir/$path"
-  fi
-done
-printf '%s\n' "$old_commit" > "$backup_dir/source-commit.txt"
+backup_dir="$(./scripts/backup.sh --backup-root "$BACKUP_ROOT" --label "$timestamp")"
 success "备份完成：$backup_dir"
 
 if [[ "$old_commit" != "$new_commit" ]]; then
@@ -139,9 +134,6 @@ if [[ "$old_commit" != "$new_commit" ]]; then
 else
   success "代码已是最新版本。"
 fi
-
-step "停止旧服务"
-./scripts/start.sh --stop || true
 
 step "准备运行环境并迁移数据库"
 setup_args=(--setup-only)

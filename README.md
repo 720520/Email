@@ -61,6 +61,10 @@ OnlyOffice 镜像默认从 Docker Hub 拉取；公司网络无法访问 Docker H
 反向代理时，可通过 `FUND_NAV_ONLYOFFICE__PUBLIC_URL=https://文档服务域名` 覆盖该地址；
 也可通过 `ONLYOFFICE_BIND_ADDRESS` 显式限制容器监听地址。
 
+独立备份和恢复使用 `./scripts/backup.sh` 与 `./scripts/restore.sh`。恢复脚本会先校验完整的
+SHA-256 清单，覆盖非空数据目录前必须显式使用 `--force`，并保留原目录作为回滚副本。
+数据治理阶段 0 的基线、脱敏约束和恢复演练见 [docs/stage-0-baseline.md](docs/stage-0-baseline.md)。
+
 测试耗时较长时，可在已经单独完成验收的发布版本上使用 `./一键部署.sh --skip-tests`。
 首次部署仍需预先安装 Git、curl、Python 3.11/3.12、Node.js 22/24 LTS；
 OnlyOffice 还需要 Docker Compose。生产环境建议在该脚本外层配置 Nginx/HTTPS，内网用户
