@@ -51,6 +51,9 @@ chmod +x 一键部署.sh scripts/deploy.sh
 `config/config.local.yaml`，随后安装变更的依赖、迁移数据库、运行检查、构建前端并重启服务。
 部署成功后会显示公司内网访问地址。备份默认保存在项目下的 `backups/`，该目录不应提交。
 默认部署会自动安装后端测试依赖；使用 `--skip-tests` 时只安装生产运行依赖。
+Ubuntu/Debian 正式机缺少 Docker 时，脚本默认通过 `sudo` 安装 Docker Engine 和
+Docker Compose v2、启用开机启动并启动 OnlyOffice；首次会要求系统管理员密码，完成后
+应注销并重新登录一次。暂时不需要在线预览时可使用 `--skip-onlyoffice`。
 
 测试耗时较长时，可在已经单独完成验收的发布版本上使用 `./一键部署.sh --skip-tests`。
 首次部署仍需预先安装 Git、curl、Python 3.11/3.12、Node.js 22/24 LTS；

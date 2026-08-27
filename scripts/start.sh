@@ -24,6 +24,7 @@ PARSE_WORKER_LOG="$LOG_DIR/parse-worker.log"
 BACKEND_HOST="${FUND_NAV_BACKEND_HOST:-0.0.0.0}"
 FRONTEND_HOST="${FUND_NAV_FRONTEND_HOST:-127.0.0.1}"
 FRONTEND_MODE="${FUND_NAV_FRONTEND_MODE:-dev}"
+SKIP_ONLYOFFICE="${FUND_NAV_SKIP_ONLYOFFICE:-0}"
 
 SETUP_ONLY=0
 WITH_DEV=0
@@ -97,8 +98,13 @@ stop_service() {
 }
 
 stop_onlyoffice() {
+  [[ "$SKIP_ONLYOFFICE" == "1" ]] && return
   if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-    docker compose -f "$PROJECT_ROOT/compose.onlyoffice.yaml" stop onlyoffice-documentserver \
+    local docker_command=(docker)
+    if ! docker info >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
+      docker_command=(sudo -n docker)
+    fi
+    "${docker_command[@]}" compose -f "$PROJECT_ROOT/compose.onlyoffice.yaml" stop onlyoffice-documentserver \
       >/dev/null 2>&1 || true
     success "OnlyOffice 已停止。"
   fi
@@ -288,18 +294,26 @@ start_parse_worker() {
 }
 
 start_onlyoffice() {
+  if [[ "$SKIP_ONLYOFFICE" == "1" ]]; then
+    warn "已跳过 OnlyOffice。PPTX 下载不受影响。"
+    return
+  fi
   if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
     warn "未安装 Docker Compose，OnlyOffice 在线预览暂不可用，PPTX 下载不受影响。"
     return
   fi
-  if ! docker info >/dev/null 2>&1; then
+  local docker_command=(docker)
+  if ! docker info >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
+    docker_command=(sudo -n docker)
+  fi
+  if ! "${docker_command[@]}" info >/dev/null 2>&1; then
     warn "当前登录会话无权访问 Docker daemon。"
     warn "请注销 Linux 用户并重新登录，然后再执行一键启动。"
     warn "OnlyOffice 暂未启动，PPTX 下载不受影响。"
     return
   fi
   step "启动 OnlyOffice Document Server"
-  docker compose -f "$PROJECT_ROOT/compose.onlyoffice.yaml" up -d onlyoffice-documentserver
+  "${docker_command[@]}" compose -f "$PROJECT_ROOT/compose.onlyoffice.yaml" up -d onlyoffice-documentserver
 }
 
 printf '\033[1;32m基金运营邮件系统 - Linux 一键启动\033[0m\n'

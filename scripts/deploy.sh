@@ -8,6 +8,7 @@ SOURCE_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 INSTALL_DIR="${FUND_NAV_INSTALL_DIR:-$SOURCE_ROOT}"
 BACKUP_ROOT="${FUND_NAV_BACKUP_DIR:-$INSTALL_DIR/backups}"
 SKIP_TESTS=0
+SKIP_ONLYOFFICE=0
 
 step() { printf '\n\033[1;36m==> %s\033[0m\n' "$1"; }
 success() { printf '\033[1;32m%s\033[0m\n' "$1"; }
@@ -23,6 +24,7 @@ usage() {
   --install-dir DIR  部署目录（默认当前项目目录）
   --branch NAME      部署分支（默认 main）
   --skip-tests       跳过后端测试和前端类型检查
+  --skip-onlyoffice  不安装或启动 Docker/OnlyOffice
   -h, --help         显示帮助
 
 也可通过环境变量配置：
@@ -45,6 +47,7 @@ while (($#)); do
       shift
       ;;
     --skip-tests) SKIP_TESTS=1 ;;
+    --skip-onlyoffice) SKIP_ONLYOFFICE=1 ;;
     -h|--help) usage; exit 0 ;;
     *) die "未知选项：$1（使用 --help 查看帮助）" ;;
   esac
@@ -54,6 +57,41 @@ done
 for command_name in git curl sha256sum; do
   command -v "$command_name" >/dev/null 2>&1 || die "缺少命令：$command_name"
 done
+
+ensure_docker() {
+  ((SKIP_ONLYOFFICE)) && return
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    if docker info >/dev/null 2>&1; then
+      return
+    fi
+    command -v sudo >/dev/null 2>&1 \
+      || die "Docker 已安装但当前用户无法访问，且系统缺少 sudo"
+    step "启用 Docker 服务和当前用户权限"
+    warn "需要输入当前 Linux 用户的系统管理员密码。"
+    sudo systemctl enable --now docker
+    sudo usermod -aG docker "${SUDO_USER:-$USER}"
+    sudo docker info >/dev/null 2>&1 || die "Docker 服务启动失败"
+    warn "已将当前用户加入 docker 组；本次部署可继续，部署结束后请注销并重新登录一次。"
+    return
+  fi
+
+  command -v apt-get >/dev/null 2>&1 \
+    || die "未检测到 apt-get，请手工安装 Docker Engine 和 Docker Compose v2，或使用 --skip-onlyoffice"
+  command -v sudo >/dev/null 2>&1 \
+    || die "缺少 sudo，无法自动安装 Docker；可使用 --skip-onlyoffice 跳过"
+
+  step "安装 Docker Engine 和 Docker Compose"
+  warn "首次安装需要输入当前 Linux 用户的系统管理员密码。"
+  sudo apt-get update
+  if ! sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io docker-compose-v2; then
+    die "Docker 安装失败。请确认系统软件源提供 docker.io 和 docker-compose-v2"
+  fi
+  sudo systemctl enable --now docker
+  sudo usermod -aG docker "${SUDO_USER:-$USER}"
+  sudo docker compose version >/dev/null 2>&1 \
+    || die "Docker Compose v2 安装后仍不可用"
+  warn "已将当前用户加入 docker 组；本次部署可继续，部署结束后请注销并重新登录一次。"
+}
 
 if [[ ! -d "$INSTALL_DIR/.git" ]]; then
   [[ ! -e "$INSTALL_DIR" ]] || [[ -z "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]] \
@@ -69,6 +107,8 @@ cd "$INSTALL_DIR"
 if [[ -n "$(git status --short --untracked-files=no)" ]]; then
   die "部署目录存在未提交的代码修改，请先提交或还原后再部署"
 fi
+
+ensure_docker
 
 step "检查远程更新"
 git fetch --prune origin "$BRANCH"
@@ -122,6 +162,7 @@ step "构建前端"
 step "重启服务"
 FUND_NAV_BACKEND_HOST=0.0.0.0 FUND_NAV_FRONTEND_HOST=0.0.0.0 \
   FUND_NAV_FRONTEND_MODE=preview \
+  FUND_NAV_SKIP_ONLYOFFICE="$SKIP_ONLYOFFICE" \
   ./scripts/start.sh --no-browser
 
 step "验证服务"
