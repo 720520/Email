@@ -22,6 +22,9 @@ FRONTEND_LOG="$LOG_DIR/frontend.log"
 REPORT_WORKER_LOG="$LOG_DIR/report-worker.log"
 PARSE_WORKER_LOG="$LOG_DIR/parse-worker.log"
 PNPM_VERSION="11.9.0"
+BACKEND_HOST="${FUND_NAV_BACKEND_HOST:-0.0.0.0}"
+FRONTEND_HOST="${FUND_NAV_FRONTEND_HOST:-127.0.0.1}"
+FRONTEND_MODE="${FUND_NAV_FRONTEND_MODE:-dev}"
 
 SETUP_ONLY=0
 NO_BROWSER=0
@@ -232,7 +235,7 @@ start_backend() {
   port_in_use 8000 && die "8000 端口已被其他程序占用。"
   step "启动后端 http://127.0.0.1:8000"
   nohup "$VENV_PYTHON" -m uvicorn app.main:app --app-dir backend \
-    --host 0.0.0.0 --port 8000 >>"$BACKEND_LOG" 2>&1 &
+    --host "$BACKEND_HOST" --port 8000 >>"$BACKEND_LOG" 2>&1 &
   printf '%s\n' "$!" > "$BACKEND_PID_FILE"
 }
 
@@ -244,8 +247,15 @@ start_frontend() {
   pid_is_running "$FRONTEND_PID_FILE" && stop_service "旧前端进程" "$FRONTEND_PID_FILE"
   port_in_use 5173 && die "5173 端口已被其他程序占用。"
   step "启动前端 http://127.0.0.1:5173"
+  local frontend_command="dev"
+  if [[ "$FRONTEND_MODE" == "preview" ]]; then
+    [[ -f "$FRONTEND_DIR/dist/index.html" ]] || die "缺少前端构建产物，请先执行 pnpm build。"
+    frontend_command="preview"
+  elif [[ "$FRONTEND_MODE" != "dev" ]]; then
+    die "不支持的 FUND_NAV_FRONTEND_MODE：$FRONTEND_MODE"
+  fi
   (cd "$FRONTEND_DIR" && nohup env COREPACK_HOME="$COREPACK_HOME" \
-    corepack "pnpm@$PNPM_VERSION" dev --host 127.0.0.1 --port 5173 \
+    corepack "pnpm@$PNPM_VERSION" "$frontend_command" --host "$FRONTEND_HOST" --port 5173 \
     >>"$FRONTEND_LOG" 2>&1 & echo "$!" > "$FRONTEND_PID_FILE")
 }
 

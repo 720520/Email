@@ -23,6 +23,7 @@ data/*
 !data/.gitkeep
 logs/*
 !logs/.gitkeep
+backups/
 
 # IDE / OS
 .idea/
