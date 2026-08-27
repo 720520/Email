@@ -2,6 +2,14 @@
 
 from app.db.models.app_user import AppUser
 from app.db.models.audit_event import AuditEvent
+from app.db.models.data_governance import (
+    DocumentRelation,
+    Entity,
+    FieldDefinition,
+    FieldValue,
+    ResourceGrant,
+    SourceDocument,
+)
 from app.db.models.email_record import AttachmentRecord, EmailRecord
 from app.db.models.enums import (
     AttachmentStatus,
@@ -50,12 +58,15 @@ __all__ = [
     "AttachmentStatus",
     "EmailRecord",
     "EmailStatus",
+    "Entity",
     "ExceptionRecord",
     "ExceptionSeverity",
     "ExceptionStatus",
     "FilingProfile",
     "FilingField",
     "FilingFileVersion",
+    "FieldDefinition",
+    "FieldValue",
     "FundNav",
     "FundNavRevision",
     "FundProduct",
@@ -65,6 +76,7 @@ __all__ = [
     "MailboxAccount",
     "MailboxUserGrant",
     "ProductDocument",
+    "DocumentRelation",
     "ParseResultRow",
     "ParseSession",
     "ReportDefinition",
@@ -77,6 +89,8 @@ __all__ = [
     "ReportRun",
     "ReportTemplate",
     "ReportTemplateVersion",
+    "ResourceGrant",
+    "SourceDocument",
     "Tenant",
     "TenantMembership",
     "TriggerType",

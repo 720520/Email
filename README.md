@@ -65,6 +65,10 @@ OnlyOffice 镜像默认从 Docker Hub 拉取；公司网络无法访问 Docker H
 SHA-256 清单，覆盖非空数据目录前必须显式使用 `--force`，并保留原目录作为回滚副本。
 数据治理阶段 0 的基线、脱敏约束和恢复演练见 [docs/stage-0-baseline.md](docs/stage-0-baseline.md)。
 
+数据治理阶段 1 已新增 `/api/v2` 统一主体、字段事实、不可变来源文件和显式权限底座；
+权限、审计、迁移及验收范围见
+[docs/data-governance-stage-1-acceptance.md](docs/data-governance-stage-1-acceptance.md)。
+
 测试耗时较长时，可在已经单独完成验收的发布版本上使用 `./一键部署.sh --skip-tests`。
 首次部署仍需预先安装 Git、curl、Python 3.11/3.12、Node.js 22/24 LTS；
 OnlyOffice 还需要 Docker Compose。生产环境建议在该脚本外层配置 Nginx/HTTPS，内网用户

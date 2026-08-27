@@ -278,7 +278,8 @@ def _set_session_cookie(response: Response, token: str) -> None:
         httponly=True,
         secure=settings.security.secure_cookie,
         samesite="strict",
-        path=settings.app.api_prefix,
+        # 会话同时供兼容的 /api/v1 与数据治理 /api/v2 使用。
+        path="/api",
     )
 
 
@@ -286,7 +287,7 @@ def _clear_session_cookie(response: Response) -> None:
     settings = get_settings()
     response.delete_cookie(
         settings.security.session_cookie_name,
-        path=settings.app.api_prefix,
+        path="/api",
         secure=settings.security.secure_cookie,
         httponly=True,
         samesite="strict",
