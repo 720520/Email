@@ -1,6 +1,6 @@
 services:
   onlyoffice-documentserver:
-    image: onlyoffice/documentserver:9.4.0.1
+    image: ${ONLYOFFICE_IMAGE:-onlyoffice/documentserver:9.4.0.1}
     container_name: fund-nav-onlyoffice
     restart: unless-stopped
     ports:

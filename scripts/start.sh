@@ -313,7 +313,11 @@ start_onlyoffice() {
     return
   fi
   step "启动 OnlyOffice Document Server"
-  "${docker_command[@]}" compose -f "$PROJECT_ROOT/compose.onlyoffice.yaml" up -d onlyoffice-documentserver
+  if ! "${docker_command[@]}" compose -f "$PROJECT_ROOT/compose.onlyoffice.yaml" up -d onlyoffice-documentserver; then
+    warn "OnlyOffice 镜像拉取或启动失败，核心系统将继续启动。"
+    warn "请检查 Docker Hub 网络，或通过 ONLYOFFICE_IMAGE 指定公司内部镜像。"
+    warn "PPTX 在线预览暂不可用，生成和下载不受影响。"
+  fi
 }
 
 printf '\033[1;32m基金运营邮件系统 - Linux 一键启动\033[0m\n'

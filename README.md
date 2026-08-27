@@ -54,6 +54,8 @@ chmod +x 一键部署.sh scripts/deploy.sh
 Ubuntu/Debian 正式机缺少 Docker 时，脚本默认通过 `sudo` 安装 Docker Engine 和
 Docker Compose v2、启用开机启动并启动 OnlyOffice；首次会要求系统管理员密码，完成后
 应注销并重新登录一次。暂时不需要在线预览时可使用 `--skip-onlyoffice`。
+OnlyOffice 镜像默认从 Docker Hub 拉取；公司网络无法访问 Docker Hub 时，镜像失败不会
+阻断核心系统启动，可通过 `ONLYOFFICE_IMAGE=公司镜像地址 ./一键部署.sh` 使用内部镜像。
 
 测试耗时较长时，可在已经单独完成验收的发布版本上使用 `./一键部署.sh --skip-tests`。
 首次部署仍需预先安装 Git、curl、Python 3.11/3.12、Node.js 22/24 LTS；
