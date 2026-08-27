@@ -29,6 +29,7 @@ from app.domain.fund_identity import master_product_identity
 from app.email.models import ArchivedEmail, MailboxMessage, ParsedEmail
 from app.parsers.models import IssueSeverity, ParseIssue, StandardNavRecord, WorkbookParseResult
 from app.repositories import EmailRepository, ExceptionRepository, FundNavRepository
+from app.services.profile_service import ProfileService
 
 logger = logging.getLogger(__name__)
 
@@ -396,6 +397,7 @@ class NavPersistenceService:
                 product.source_investment_manager_info = record.investment_manager_info
             if record.investment_strategy_info:
                 product.source_investment_strategy_info = record.investment_strategy_info
+        ProfileService.ensure_product(session, product)
         return product
 
     def persist_processing_failure(

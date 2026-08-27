@@ -110,3 +110,33 @@ class ResourceGrantUpsert(BaseModel):
 class ResourceGrantItem(ResourceGrantUpsert):
     id: int
     is_active: bool
+
+
+class ProfileDetail(BaseModel):
+    entity: EntityItem
+    field_definitions: list[FieldDefinitionItem]
+    facts: list[FieldValueItem]
+    documents: list[SourceDocumentItem]
+
+
+class ProductProfileSummary(BaseModel):
+    entity: EntityItem
+    fund_product_id: int
+    product_code: str
+    product_name: str
+    document_count: int = 0
+
+
+class ProductMaterialAttributionItem(BaseModel):
+    id: int
+    status: str
+    document: SourceDocumentItem
+    product_entity_id: int | None
+    assigned_by_user_id: int | None
+    assigned_at: datetime | None
+    notes: str | None
+
+
+class ProductMaterialAssign(BaseModel):
+    product_entity_id: int
+    notes: str | None = Field(default=None, max_length=500)

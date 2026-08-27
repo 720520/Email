@@ -15,9 +15,11 @@ from app.db.models import (
     AttachmentStatus,
     EmailRecord,
     EmailStatus,
+    Entity,
     ExceptionRecord,
     FundNav,
     FundProduct,
+    FundProductProfile,
     MailboxAccount,
     Tenant,
 )
@@ -271,6 +273,8 @@ def test_product_elements_create_master_and_daily_snapshot(
     with database.session_factory() as session:
         nav = session.scalar(select(FundNav))
         product = session.scalar(select(FundProduct))
+        profile = session.scalar(select(FundProductProfile))
+        product_entity = session.get(Entity, product.entity_id) if product else None
 
     assert result.inserted_count == 1
     assert nav is not None
@@ -283,6 +287,12 @@ def test_product_elements_create_master_and_daily_snapshot(
     assert product.product_code == "SAVH33"
     assert product.product_name == "吉余牡丹私募证券投资基金"
     assert product.investment_manager_info == "附件经理信息"
+    assert profile is not None
+    assert profile.fund_product_id == product.id
+    assert profile.entity_id == product.entity_id
+    assert product_entity is not None
+    assert product_entity.entity_type == "product"
+    assert product_entity.display_name == product.product_name
 
 
 def test_parser_issue_is_persisted_with_source_location(

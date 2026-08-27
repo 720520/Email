@@ -45,13 +45,16 @@ def test_initial_migration_upgrade_check_and_downgrade(tmp_path: Path, monkeypat
         "fund_nav",
         "fund_nav_revision",
         "fund_product",
+        "fund_product_profile",
         "job_run",
         "mailbox_account",
         "mailbox_user_grant",
         "document_relation",
+        "organization_profile",
         "parse_result_row",
         "parse_session",
         "product_document",
+        "product_material_attribution",
         "report_definition",
         "report_batch",
         "report_batch_item",
@@ -82,7 +85,9 @@ def test_initial_migration_upgrade_check_and_downgrade(tmp_path: Path, monkeypat
     product_uniques = {item["name"] for item in inspector.get_unique_constraints("fund_product")}
     assert "uq_fund_product_tenant_product_code" in product_uniques
     product_columns = {item["name"] for item in inspector.get_columns("fund_product")}
-    assert {"source_profile", "source_profile_meta", "manual_profile"}.issubset(product_columns)
+    assert {"source_profile", "source_profile_meta", "manual_profile", "entity_id"}.issubset(
+        product_columns
+    )
     email_uniques = {item["name"] for item in inspector.get_unique_constraints("email_record")}
     assert "uq_email_record_scope_uidvalidity_uid" in email_uniques
     mailbox_columns = {item["name"] for item in inspector.get_columns("mailbox_account")}
@@ -110,6 +115,9 @@ def test_initial_migration_upgrade_check_and_downgrade(tmp_path: Path, monkeypat
         "source_document",
         "document_relation",
         "resource_grant",
+        "organization_profile",
+        "fund_product_profile",
+        "product_material_attribution",
         "fund_nav",
         "fund_product",
         "product_document",

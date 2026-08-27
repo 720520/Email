@@ -1,7 +1,13 @@
 import axios from 'axios'
+import type { AxiosInstance } from 'axios'
 
 export const http = axios.create({
   baseURL: '/api/v1',
+  timeout: 30_000,
+  withCredentials: true,
+})
+export const governanceHttp = axios.create({
+  baseURL: '/api/v2',
   timeout: 30_000,
   withCredentials: true,
 })
@@ -14,28 +20,33 @@ export function setUnauthorizedHandler(handler: UnauthorizedHandler) {
   unauthorizedHandler = handler
 }
 
-http.interceptors.response.use(
-  (response) => response,
-  async (error: unknown) => {
-    const requestUrl = axios.isAxiosError(error) ? error.config?.url : undefined
-    const isAuthenticationProbe = requestUrl === '/auth/login' || requestUrl === '/auth/me'
-    if (
-      axios.isAxiosError(error)
-      && error.response?.status === 401
-      && !isAuthenticationProbe
-      && unauthorizedHandler
-      && !handlingUnauthorized
-    ) {
-      handlingUnauthorized = true
-      try {
-        await unauthorizedHandler()
-      } finally {
-        handlingUnauthorized = false
+function installResponseInterceptor(client: AxiosInstance) {
+  client.interceptors.response.use(
+    (response) => response,
+    async (error: unknown) => {
+      const requestUrl = axios.isAxiosError(error) ? error.config?.url : undefined
+      const isAuthenticationProbe = requestUrl === '/auth/login' || requestUrl === '/auth/me'
+      if (
+        axios.isAxiosError(error)
+        && error.response?.status === 401
+        && !isAuthenticationProbe
+        && unauthorizedHandler
+        && !handlingUnauthorized
+      ) {
+        handlingUnauthorized = true
+        try {
+          await unauthorizedHandler()
+        } finally {
+          handlingUnauthorized = false
+        }
       }
-    }
-    return Promise.reject(error)
-  },
-)
+      return Promise.reject(error)
+    },
+  )
+}
+
+installResponseInterceptor(http)
+installResponseInterceptor(governanceHttp)
 
 export function apiErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {

@@ -1,4 +1,4 @@
-import { http } from '@/platform/api/http'
+import { governanceHttp, http } from '@/platform/api/http'
 
 import type {
   FilingProfile,
@@ -6,6 +6,9 @@ import type {
   FilingFieldDefinition,
   FilingFieldPayload,
   FilingFileVersion,
+  ProductMaterialAttributionItem,
+  ProductProfileSummary,
+  ProfileDetail,
   TenantCreatePayload,
   TenantMember,
   TenantMemberCreatePayload,
@@ -13,6 +16,44 @@ import type {
   TenantSummary,
   TenantUpdatePayload,
 } from './types'
+
+export async function getCompanyProfile(): Promise<ProfileDetail> {
+  return (await governanceHttp.get<ProfileDetail>('/profiles/company')).data
+}
+
+export async function getProductProfiles(): Promise<ProductProfileSummary[]> {
+  return (await governanceHttp.get<ProductProfileSummary[]>('/profiles/products')).data
+}
+
+export async function getProductProfile(entityId: number): Promise<ProfileDetail> {
+  return (await governanceHttp.get<ProfileDetail>(`/profiles/products/${entityId}`)).data
+}
+
+export async function getProductMaterialAttributions(): Promise<ProductMaterialAttributionItem[]> {
+  return (
+    await governanceHttp.get<ProductMaterialAttributionItem[]>('/product-material-attributions')
+  ).data
+}
+
+export async function assignProductMaterial(
+  attributionId: number,
+  productEntityId: number,
+): Promise<ProductMaterialAttributionItem> {
+  return (
+    await governanceHttp.post<ProductMaterialAttributionItem>(
+      `/product-material-attributions/${attributionId}/assign`,
+      { product_entity_id: productEntityId },
+    )
+  ).data
+}
+
+export async function downloadGovernanceDocument(documentId: number): Promise<Blob> {
+  return (
+    await governanceHttp.get<Blob>(`/documents/${documentId}/download`, {
+      responseType: 'blob',
+    })
+  ).data
+}
 
 export async function getFilingProfile(): Promise<FilingProfile> {
   return (await http.get<FilingProfile>('/filing-profile')).data

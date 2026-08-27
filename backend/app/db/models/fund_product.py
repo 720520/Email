@@ -4,7 +4,17 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import JSON, Boolean, Date, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Date,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -21,11 +31,15 @@ class FundProduct(TenantOwnedMixin, TimestampMixin, Base):
             "product_code",
             name="uq_fund_product_tenant_product_code",
         ),
+        UniqueConstraint("entity_id", name="uq_fund_product_entity_id"),
         Index("ix_fund_product_product_name", "product_name"),
         Index("ix_fund_product_latest_source_date", "latest_source_date"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entity_id: Mapped[int | None] = mapped_column(
+        ForeignKey("entity.id", ondelete="RESTRICT"), index=True
+    )
     product_code: Mapped[str] = mapped_column(String(64), nullable=False)
     product_name: Mapped[str] = mapped_column(String(255), nullable=False)
 
@@ -35,12 +49,8 @@ class FundProduct(TenantOwnedMixin, TimestampMixin, Base):
     # 人工值与是否启用覆盖分开保存，便于恢复来源值并完整审计。
     manual_investment_manager_info: Mapped[str | None] = mapped_column(Text)
     manual_investment_strategy_info: Mapped[str | None] = mapped_column(Text)
-    investment_manager_manual: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False
-    )
-    investment_strategy_manual: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False
-    )
+    investment_manager_manual: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    investment_strategy_manual: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     # 合同/邮件提取的扩展要素与人工覆盖分层保存；字段级来源写入 source_profile_meta。
     source_profile: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)

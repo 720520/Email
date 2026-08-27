@@ -116,6 +116,7 @@ def update_profile(
     session: TenantDatabaseSession,
     scope: AdminScope,
 ) -> FilingProfileResponse:
+    _legacy_read_only()
     _ensure_default_fields(session, scope)
     valid_fields = {
         item.field_key
@@ -161,6 +162,7 @@ def create_field(
     session: TenantDatabaseSession,
     scope: AdminScope,
 ) -> FilingFieldDefinition:
+    _legacy_read_only()
     field = FilingField(
         tenant_id=scope.tenant_id,
         field_key=f"custom_{uuid.uuid4().hex}",
@@ -197,6 +199,7 @@ def update_field(
     session: TenantDatabaseSession,
     scope: AdminScope,
 ) -> FilingFieldDefinition:
+    _legacy_read_only()
     field = _active_field(session, field_id)
     if payload.field_type != field.field_type:
         raise AppError(
@@ -246,6 +249,7 @@ def delete_field(
     session: TenantDatabaseSession,
     scope: AdminScope,
 ) -> Response:
+    _legacy_read_only()
     field = _active_field(session, field_id)
     version_count = (
         session.scalar(
@@ -279,6 +283,7 @@ async def upload_file_version(
     scope: AdminScope,
     file: Annotated[UploadFile, File(description="备案资料文件")],
 ) -> FilingFileVersionItem:
+    _legacy_read_only()
     field = _active_field(session, field_id)
     if field.field_type != "file":
         raise AppError("FILING_FIELD_NOT_FILE", "只有文件字段可以上传附件", status_code=409)
@@ -537,6 +542,14 @@ def _active_field(session: Session, field_id: int) -> FilingField:
 
 def _clean_sources(values: list[str]) -> list[str]:
     return [value.strip()[:200] for value in values if value.strip()][:20]
+
+
+def _legacy_read_only() -> None:
+    raise AppError(
+        "FILING_PROFILE_READ_ONLY",
+        "旧备案资料库已进入只读兼容模式，请使用公司资料和产品资料接口",
+        status_code=410,
+    )
 
 
 def _safe_data_path(relative_path: str) -> Path:

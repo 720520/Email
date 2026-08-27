@@ -33,6 +33,7 @@ class FieldDefinition(TenantOwnedMixin, TimestampMixin, Base):
     __tablename__ = "field_definition"
     __table_args__ = (
         UniqueConstraint("tenant_id", "entity_type", "field_code", name="uq_field_definition_code"),
+        UniqueConstraint("legacy_filing_field_id", name="uq_field_definition_legacy_filing_field"),
         Index("ix_field_definition_type_order", "tenant_id", "entity_type", "sort_order"),
     )
 
@@ -49,6 +50,7 @@ class FieldDefinition(TenantOwnedMixin, TimestampMixin, Base):
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    legacy_filing_field_id: Mapped[int | None] = mapped_column(Integer)
 
 
 class FieldValue(TenantOwnedMixin, CreatedAtMixin, Base):
@@ -88,6 +90,9 @@ class SourceDocument(TenantOwnedMixin, CreatedAtMixin, Base):
     __tablename__ = "source_document"
     __table_args__ = (
         UniqueConstraint("tenant_id", "document_key", "version", name="uq_source_document_version"),
+        UniqueConstraint(
+            "legacy_filing_file_version_id", name="uq_source_document_legacy_filing_version"
+        ),
         Index("ix_source_document_entity_time", "entity_id", "create_time"),
         Index("ix_source_document_hash", "tenant_id", "content_hash"),
     )
@@ -111,6 +116,7 @@ class SourceDocument(TenantOwnedMixin, CreatedAtMixin, Base):
     uploaded_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("app_user.id", ondelete="SET NULL"), index=True
     )
+    legacy_filing_file_version_id: Mapped[int | None] = mapped_column(Integer)
 
 
 class DocumentRelation(TenantOwnedMixin, CreatedAtMixin, Base):
@@ -150,6 +156,56 @@ class ResourceGrant(TenantOwnedMixin, TimestampMixin, Base):
     granted_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("app_user.id", ondelete="SET NULL"), index=True
     )
+
+
+class OrganizationProfile(TenantOwnedMixin, TimestampMixin, Base):
+    __tablename__ = "organization_profile"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", name="uq_organization_profile_tenant_id"),
+        UniqueConstraint("entity_id", name="uq_organization_profile_entity_id"),
+        UniqueConstraint("legacy_filing_profile_id", name="uq_organization_profile_legacy"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("entity.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    legacy_filing_profile_id: Mapped[int | None] = mapped_column(Integer)
+
+
+class FundProductProfile(TenantOwnedMixin, TimestampMixin, Base):
+    __tablename__ = "fund_product_profile"
+    __table_args__ = (
+        UniqueConstraint("entity_id", name="uq_fund_product_profile_entity_id"),
+        UniqueConstraint("fund_product_id", name="uq_fund_product_profile_product_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("entity.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    fund_product_id: Mapped[int] = mapped_column(
+        ForeignKey("fund_product.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+
+
+class ProductMaterialAttribution(TenantOwnedMixin, TimestampMixin, Base):
+    __tablename__ = "product_material_attribution"
+    __table_args__ = (UniqueConstraint("document_id", name="uq_product_material_document"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("source_document.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    product_entity_id: Mapped[int | None] = mapped_column(
+        ForeignKey("entity.id", ondelete="RESTRICT"), index=True
+    )
+    assigned_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("app_user.id", ondelete="SET NULL"), index=True
+    )
+    assigned_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    notes: Mapped[str | None] = mapped_column(String(500))
 
 
 class SourceDocumentImmutableError(RuntimeError):

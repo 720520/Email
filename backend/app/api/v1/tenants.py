@@ -30,6 +30,7 @@ from app.db.models import (
 )
 from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService, normalize_username
+from app.services.profile_service import ProfileService
 
 router = APIRouter()
 
@@ -79,6 +80,11 @@ def create_tenant(
         tenant = Tenant(code=payload.code, name=payload.name.strip(), is_active=True)
         session.add(tenant)
         session.flush()
+        ProfileService.ensure_organization(
+            session,
+            tenant,
+            created_by_user_id=scope.user.id,
+        )
         membership = TenantMembership(
             tenant_id=tenant.id,
             user_id=scope.user.id,
@@ -264,8 +270,10 @@ def update_tenant_member(
         user = session.get(AppUser, user_id)
         if membership is None or user is None:
             raise AppError("MEMBERSHIP_NOT_FOUND", "租户成员不存在", status_code=404)
-        removes_admin = membership.is_active and membership.role == UserRole.ADMIN and (
-            not payload.is_active or payload.role != UserRole.ADMIN
+        removes_admin = (
+            membership.is_active
+            and membership.role == UserRole.ADMIN
+            and (not payload.is_active or payload.role != UserRole.ADMIN)
         )
         if removes_admin and _active_admin_count(session, tenant_id, exclude_user_id=user_id) == 0:
             raise AppError(
@@ -302,19 +310,25 @@ def _tenant_summary(
     *,
     scope: TenantContext,
 ) -> TenantSummary:
-    member_count = session.scalar(
-        select(func.count(TenantMembership.id))
-        .where(
-            TenantMembership.tenant_id == tenant.id,
-            TenantMembership.is_active.is_(True),
+    member_count = (
+        session.scalar(
+            select(func.count(TenantMembership.id))
+            .where(
+                TenantMembership.tenant_id == tenant.id,
+                TenantMembership.is_active.is_(True),
+            )
+            .execution_options(skip_tenant_scope=True)
         )
-        .execution_options(skip_tenant_scope=True)
-    ) or 0
-    mailbox_count = session.scalar(
-        select(func.count(MailboxAccount.id))
-        .where(MailboxAccount.tenant_id == tenant.id)
-        .execution_options(skip_tenant_scope=True)
-    ) or 0
+        or 0
+    )
+    mailbox_count = (
+        session.scalar(
+            select(func.count(MailboxAccount.id))
+            .where(MailboxAccount.tenant_id == tenant.id)
+            .execution_options(skip_tenant_scope=True)
+        )
+        or 0
+    )
     can_manage = scope.user.is_platform_admin or bool(
         membership and membership.is_active and membership.role == UserRole.ADMIN
     )
@@ -382,14 +396,17 @@ def _active_admin_count(
     *,
     exclude_user_id: int,
 ) -> int:
-    return session.scalar(
-        select(func.count(TenantMembership.id)).where(
-            TenantMembership.tenant_id == tenant_id,
-            TenantMembership.user_id != exclude_user_id,
-            TenantMembership.role == UserRole.ADMIN,
-            TenantMembership.is_active.is_(True),
+    return (
+        session.scalar(
+            select(func.count(TenantMembership.id)).where(
+                TenantMembership.tenant_id == tenant_id,
+                TenantMembership.user_id != exclude_user_id,
+                TenantMembership.role == UserRole.ADMIN,
+                TenantMembership.is_active.is_(True),
+            )
         )
-    ) or 0
+        or 0
+    )
 
 
 def _require_audit_key() -> None:

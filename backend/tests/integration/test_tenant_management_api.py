@@ -6,7 +6,13 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from app.core.config import get_settings
-from app.db.models import AppUser, AuditEvent, TenantMembership, UserRole
+from app.db.models import (
+    AppUser,
+    AuditEvent,
+    OrganizationProfile,
+    TenantMembership,
+    UserRole,
+)
 from app.db.session import get_database_manager
 from app.services.auth_service import AuthService
 from app.services.foundation_service import FoundationService
@@ -101,12 +107,18 @@ async def test_tenant_creation_login_selection_and_switch_are_closed_loop(app: F
                 .execution_options(skip_tenant_scope=True)
             )
         )
+        company_profile = session.scalar(
+            select(OrganizationProfile)
+            .where(OrganizationProfile.tenant_id == qianguo_id)
+            .execution_options(skip_tenant_scope=True)
+        )
     assert {
         "tenant.create",
         "tenant.member.create",
         "auth.tenant.switch_out",
         "auth.tenant.switch_in",
     }.issubset(actions)
+    assert company_profile is not None
 
 
 async def test_tenant_admin_permissions_and_last_admin_guard(app: FastAPI) -> None:

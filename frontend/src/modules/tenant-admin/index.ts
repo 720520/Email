@@ -8,15 +8,15 @@ export const tenantAdminModule: BusinessModule = {
   description: '租户边界、成员与权限',
   order: 90,
   navigation: [
-    { path: '/filing-profile', title: '备案资料库', icon: FolderOpened },
+    { path: '/filing-profile', title: '资料中心', icon: FolderOpened },
     { path: '/tenant-management', title: '租户与成员', icon: OfficeBuilding, permission: 'admin' },
   ],
   routes: [
     {
       path: '/filing-profile',
       name: 'filing-profile',
-      component: () => import('./views/FilingProfileView.vue'),
-      meta: { title: '备案资料库' },
+      component: () => import('./views/DataProfilesView.vue'),
+      meta: { title: '资料中心' },
     },
     {
       path: '/tenant-management',
