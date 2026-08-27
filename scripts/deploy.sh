@@ -109,13 +109,11 @@ step "准备运行环境并迁移数据库"
 if ((!SKIP_TESTS)); then
   step "执行部署前检查"
   ./.venv/bin/python -m pytest backend/tests/unit -q
-  (cd frontend && COREPACK_HOME="$INSTALL_DIR/.tools/corepack" \
-    corepack "pnpm@11.9.0" type-check)
+  (cd frontend && "$INSTALL_DIR/scripts/pnpm.sh" type-check)
 fi
 
 step "构建前端"
-(cd frontend && COREPACK_HOME="$INSTALL_DIR/.tools/corepack" \
-  corepack "pnpm@11.9.0" build)
+(cd frontend && "$INSTALL_DIR/scripts/pnpm.sh" build)
 
 step "重启服务"
 FUND_NAV_BACKEND_HOST=0.0.0.0 FUND_NAV_FRONTEND_HOST=0.0.0.0 \

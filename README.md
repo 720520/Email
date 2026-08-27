@@ -52,9 +52,13 @@ chmod +x 一键部署.sh scripts/deploy.sh
 部署成功后会显示公司内网访问地址。备份默认保存在项目下的 `backups/`，该目录不应提交。
 
 测试耗时较长时，可在已经单独完成验收的发布版本上使用 `./一键部署.sh --skip-tests`。
-首次部署仍需预先安装 Git、curl、Python 3.11/3.12、Node.js 20.19+（推荐 22/24 LTS）；
+首次部署仍需预先安装 Git、curl、Python 3.11/3.12、Node.js 22/24 LTS；
 OnlyOffice 还需要 Docker Compose。生产环境建议在该脚本外层配置 Nginx/HTTPS，内网用户
 只访问 443 端口。
+
+Linux 脚本不会经过系统 Corepack：优先使用 `PATH` 中可正常运行的 pnpm 11；系统没有
+pnpm 11 时，会通过 npm 在项目 `.tools/pnpm` 下安装固定版本，不需要 sudo，也不会修改
+系统全局 Node.js 环境。
 
 ### Linux 一键启动（推荐）
 
@@ -64,7 +68,7 @@ OnlyOffice 还需要 Docker Compose。生产环境建议在该脚本外层配置
 ./一键启动.sh
 ```
 
-启动器会自动检查 Python 3.11/3.12、Node.js 20.19+ 和 pnpm 11，必要时在
+启动器会自动检查 Python 3.11/3.12、Node.js 22/24 LTS 和 pnpm 11，必要时在
 项目内安装 Python 3.12 和 uv，然后安装依赖、生成业务密钥、执行数据库
 迁移并启动前后端。首次启动会在终端中要求创建管理员，密码至少 10 位且
 输入时不显示。启动成功后会打开 <http://127.0.0.1:5173>。

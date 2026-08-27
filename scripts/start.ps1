@@ -238,7 +238,7 @@ function Ensure-Pnpm {
     if (-not $npm) {
         throw "npm was not found after Node.js installation."
     }
-    Invoke-Checked -FilePath $npm -Arguments @("install", "--global", "pnpm@11.9.0") -FailureMessage "pnpm installation failed"
+    Invoke-Checked -FilePath $npm -Arguments @("install", "--global", "pnpm@11.24.0") -FailureMessage "pnpm installation failed"
     Refresh-ProcessPath
     $pnpm = Get-Executable -Names @("pnpm.cmd", "pnpm")
     if (-not $pnpm) {

@@ -10,7 +10,7 @@ VENV_DIR="$PROJECT_ROOT/.venv"
 VENV_PYTHON="$VENV_DIR/bin/python"
 TOOLS_DIR="$PROJECT_ROOT/.tools"
 UV="$TOOLS_DIR/bin/uv"
-COREPACK_HOME="$TOOLS_DIR/corepack"
+PNPM="$SCRIPT_DIR/pnpm.sh"
 LOG_DIR="$PROJECT_ROOT/logs"
 RUN_DIR="$PROJECT_ROOT/.codex_tmp/run"
 BACKEND_PID_FILE="$RUN_DIR/backend.pid"
@@ -21,7 +21,6 @@ BACKEND_LOG="$LOG_DIR/backend.log"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
 REPORT_WORKER_LOG="$LOG_DIR/report-worker.log"
 PARSE_WORKER_LOG="$LOG_DIR/parse-worker.log"
-PNPM_VERSION="11.9.0"
 BACKEND_HOST="${FUND_NAV_BACKEND_HOST:-0.0.0.0}"
 FRONTEND_HOST="${FUND_NAV_FRONTEND_HOST:-127.0.0.1}"
 FRONTEND_MODE="${FUND_NAV_FRONTEND_MODE:-dev}"
@@ -64,7 +63,7 @@ while (($#)); do
   shift
 done
 
-mkdir -p "$LOG_DIR" "$RUN_DIR" "$TOOLS_DIR/bin" "$COREPACK_HOME"
+mkdir -p "$LOG_DIR" "$RUN_DIR" "$TOOLS_DIR/bin"
 cd "$PROJECT_ROOT"
 
 pid_is_running() {
@@ -188,17 +187,17 @@ ensure_node() {
   version="$(node --version | sed 's/^v//')"
   major="${version%%.*}"
   minor="${version#*.}"; minor="${minor%%.*}"
-  if ((major < 20 || (major == 20 && minor < 19))); then
-    die "Node.js $version 过旧，项目需要 20.19+ （推荐 22/24 LTS）。"
+  if ((major < 22 || major >= 25)); then
+    die "Node.js $version 不受支持，项目需要 Node.js 22 或 24 LTS。"
   fi
 }
 
 pnpm() {
-  COREPACK_HOME="$COREPACK_HOME" corepack "pnpm@$PNPM_VERSION" "$@"
+  "$PNPM" "$@"
 }
 
 ensure_frontend_dependencies() {
-  command -v corepack >/dev/null 2>&1 || die "未找到 corepack，请安装完整版 Node.js 22/24 LTS。"
+  [[ -x "$PNPM" ]] || die "缺少 pnpm 启动器：$PNPM"
   local marker="$FRONTEND_DIR/node_modules/.fund-nav-lock.sha256"
   local expected installed=""
   expected="$(sha256sum "$FRONTEND_DIR/package.json" "$FRONTEND_DIR/pnpm-lock.yaml" | sha256sum | awk '{print $1}')"
@@ -254,8 +253,8 @@ start_frontend() {
   elif [[ "$FRONTEND_MODE" != "dev" ]]; then
     die "不支持的 FUND_NAV_FRONTEND_MODE：$FRONTEND_MODE"
   fi
-  (cd "$FRONTEND_DIR" && nohup env COREPACK_HOME="$COREPACK_HOME" \
-    corepack "pnpm@$PNPM_VERSION" "$frontend_command" --host "$FRONTEND_HOST" --port 5173 \
+  (cd "$FRONTEND_DIR" && nohup "$PNPM" \
+    "$frontend_command" --host "$FRONTEND_HOST" --port 5173 \
     >>"$FRONTEND_LOG" 2>&1 & echo "$!" > "$FRONTEND_PID_FILE")
 }
 

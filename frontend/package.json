@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22 <25",
+    "pnpm": ">=11 <12"
+  },
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vue-tsc -b && vite build",
@@ -29,5 +33,5 @@
     "vitest": "^4.0.15",
     "vue-tsc": "^3.1.5"
   },
-  "packageManager": "pnpm@11.9.0"
+  "packageManager": "pnpm@11.24.0"
 }
