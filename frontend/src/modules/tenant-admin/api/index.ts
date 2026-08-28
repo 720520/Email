@@ -9,6 +9,7 @@ import type {
   ProductMaterialAttributionItem,
   ProductProfileSummary,
   ProfileDetail,
+  SourceDocumentItem,
   TenantCreatePayload,
   TenantMember,
   TenantMemberCreatePayload,
@@ -16,6 +17,14 @@ import type {
   TenantSummary,
   TenantUpdatePayload,
 } from './types'
+
+export interface GovernanceDocumentUpload {
+  file: File
+  entityId: number
+  documentType: string
+  sensitivity: 'normal' | 'sensitive' | 'highly_sensitive'
+  documentKey?: string
+}
 
 export async function getCompanyProfile(): Promise<ProfileDetail> {
   return (await governanceHttp.get<ProfileDetail>('/profiles/company')).data
@@ -53,6 +62,19 @@ export async function downloadGovernanceDocument(documentId: number): Promise<Bl
       responseType: 'blob',
     })
   ).data
+}
+
+export async function uploadGovernanceDocument(
+  payload: GovernanceDocumentUpload,
+): Promise<SourceDocumentItem> {
+  const form = new FormData()
+  form.append('file', payload.file)
+  form.append('entity_id', String(payload.entityId))
+  form.append('document_type', payload.documentType)
+  form.append('source_channel', 'manual_upload')
+  form.append('sensitivity', payload.sensitivity)
+  if (payload.documentKey) form.append('document_key', payload.documentKey)
+  return (await governanceHttp.post<SourceDocumentItem>('/documents', form)).data
 }
 
 export async function getFilingProfile(): Promise<FilingProfile> {

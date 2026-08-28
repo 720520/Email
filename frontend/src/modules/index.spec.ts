@@ -16,11 +16,12 @@ const fakeModule = (id: string, routeName: string, path: string, order = 10): Bu
 describe('业务模块注册中心', () => {
   it('聚合基金运营与租户管理模块的导航和路由', () => {
     expect(businessModules.map((module) => module.id)).toEqual([
-      'fund-operations', 'reporting', 'tenant-admin',
+      'fund-operations', 'reporting', 'account-opening', 'tenant-admin',
     ])
     expect(businessRoutes.map((route) => route.name)).toEqual([
       'overview', 'emails', 'mailboxes', 'fund-nav', 'fund-products', 'exceptions', 'operations',
       'reports', 'report-fields', 'report-editor',
+      'institutions', 'account-applications',
       'filing-profile', 'tenant-management',
     ])
   })

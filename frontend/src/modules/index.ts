@@ -1,3 +1,4 @@
+import { accountOpeningModule } from './account-opening'
 import { fundOperationsModule } from './fund-operations'
 import { reportingModule } from './reporting'
 import { tenantAdminModule } from './tenant-admin'
@@ -32,6 +33,7 @@ export function registerBusinessModules(modules: BusinessModule[]): BusinessModu
 export const businessModules = registerBusinessModules([
   fundOperationsModule,
   reportingModule,
+  accountOpeningModule,
   tenantAdminModule,
 ])
 

@@ -1,5 +1,14 @@
 """数据库模型统一导出，确保 Alembic 能发现全部 metadata。"""
 
+from app.db.models.account_opening import (
+    AccountApplication,
+    ApplicationEvent,
+    ApplicationRequirement,
+    ApplicationSupplement,
+    CounterpartyInstitution,
+    RequirementTemplate,
+    RequirementTemplateItem,
+)
 from app.db.models.app_user import AppUser
 from app.db.models.audit_event import AuditEvent
 from app.db.models.data_governance import (
@@ -55,6 +64,10 @@ from app.db.models.tenant import MailboxUserGrant, Tenant, TenantMembership
 
 __all__ = [
     "AppUser",
+    "AccountApplication",
+    "ApplicationEvent",
+    "ApplicationRequirement",
+    "ApplicationSupplement",
     "AuditEvent",
     "AttachmentRecord",
     "AttachmentParseTask",
@@ -62,6 +75,7 @@ __all__ = [
     "EmailRecord",
     "EmailStatus",
     "Entity",
+    "CounterpartyInstitution",
     "ExceptionRecord",
     "ExceptionSeverity",
     "ExceptionStatus",
@@ -95,6 +109,8 @@ __all__ = [
     "ReportRun",
     "ReportTemplate",
     "ReportTemplateVersion",
+    "RequirementTemplate",
+    "RequirementTemplateItem",
     "ResourceGrant",
     "SourceDocument",
     "Tenant",
