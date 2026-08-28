@@ -264,7 +264,7 @@ stop_stale_frontend() {
     kill "$pid" 2>/dev/null || true
   done
   for _ in {1..20}; do
-    port_in_use 5173 || return
+    port_in_use 5173 || return 0
     sleep 0.25
   done
   die "旧前端未能停止；请执行 fuser -k 5173/tcp 后重试。"

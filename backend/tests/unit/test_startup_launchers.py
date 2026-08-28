@@ -14,6 +14,7 @@ def test_linux_launcher_does_not_silently_reuse_another_frontend() -> None:
     assert "stop_stale_frontend" in source
     assert "另一份项目遗留的前端" in source
     assert "<title>基金运营工作台</title>" in source
+    assert "port_in_use 5173 || return 0" in source
     assert 'warn "前端已在运行。"' not in source
 
 
