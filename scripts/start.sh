@@ -238,6 +238,38 @@ port_in_use() {
   (echo >/dev/tcp/127.0.0.1/"$1") >/dev/null 2>&1
 }
 
+frontend_app_ready() {
+  curl -fsS --max-time 2 "http://127.0.0.1:5173" 2>/dev/null \
+    | grep -Fq '<title>基金运营工作台</title>'
+}
+
+frontend_listener_pids() {
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -n tcp 5173 2>/dev/null || true
+    return
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -tiTCP:5173 -sTCP:LISTEN 2>/dev/null || true
+  fi
+}
+
+stop_stale_frontend() {
+  local raw_pids pid
+  raw_pids="$(frontend_listener_pids)"
+  [[ -n "${raw_pids//[[:space:]]/}" ]] || die \
+    "检测到旧版前端，但无法定位其进程；请执行 fuser -k 5173/tcp 后重试。"
+  warn "检测到另一份项目遗留的前端，正在切换到当前目录。"
+  for pid in $raw_pids; do
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    kill "$pid" 2>/dev/null || true
+  done
+  for _ in {1..20}; do
+    port_in_use 5173 || return
+    sleep 0.25
+  done
+  die "旧前端未能停止；请执行 fuser -k 5173/tcp 后重试。"
+}
+
 start_backend() {
   if http_ready "http://127.0.0.1:8000/api/v1/health/live"; then
     warn "后端已在运行。"
@@ -253,8 +285,12 @@ start_backend() {
 
 start_frontend() {
   if http_ready "http://127.0.0.1:5173"; then
-    warn "前端已在运行。"
-    return
+    if pid_is_running "$FRONTEND_PID_FILE"; then
+      warn "当前项目前端已在运行。"
+      return
+    fi
+    frontend_app_ready || die "5173 端口已被其他 Web 服务占用，请先关闭该服务。"
+    stop_stale_frontend
   fi
   pid_is_running "$FRONTEND_PID_FILE" && stop_service "旧前端进程" "$FRONTEND_PID_FILE"
   port_in_use 5173 && die "5173 端口已被其他程序占用。"

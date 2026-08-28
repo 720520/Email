@@ -3,8 +3,7 @@ Type=Application
 Version=1.0
 Name=基金运营邮件系统
 Comment=初始化环境并启动前后端服务
-Exec=/home/yuan/文档/ChatGPT/Email/一键启动.sh
-Path=/home/yuan/文档/ChatGPT/Email
+Exec=/bin/bash -c "desktop_file=\"\\$1\"; project_root=\"\\$(dirname -- \"\\$desktop_file\")\"; exec \"\\$project_root/一键启动.sh\"" fund-nav-launcher %k
 Icon=utilities-terminal
 Terminal=true
 Categories=Office;
